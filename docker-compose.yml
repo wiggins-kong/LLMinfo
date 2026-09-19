@@ -1,0 +1,36 @@
+# LLMinfo on a UGREEN NAS (or any Docker host).
+#
+#   cp .env.example .env   # then fill it in
+#   docker compose up -d
+#
+# The image is pulled from GHCR; there is nothing to build on the NAS.
+
+services:
+  llminfo:
+    image: ghcr.io/wiggins-kong/llminfo:latest
+    container_name: llminfo
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Keep these in sync with the volume mount below.
+      DATA_DIR: /data
+      PORT: "3000"
+    ports:
+      # Bind on all interfaces so SakuraFrp's frpc can reach it from the NAS.
+      # If frpc runs in its own container, put both on the same Docker network
+      # instead and drop this mapping.
+      - "3000:3000"
+    volumes:
+      - ./data:/data
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 10s
+      start_period: 40s
+      retries: 3

@@ -1,0 +1,279 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   LLMinfo design tokens — Windows 11 Fluent with Mica/Acrylic materials.
+
+   Material discipline (do not relax this):
+     Mica    -> large persistent surfaces: window background, side navigation
+     Acrylic -> transient surfaces only: title bar, table header, drawer,
+                flyout, mobile tab bar
+   Every backdrop-filter in the app lives on the Acrylic list above, which is
+   what keeps a 7,860-row table scrolling smoothly.
+--------------------------------------------------------------------------- */
+
+@theme inline {
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-code);
+}
+
+:root {
+  color-scheme: light dark;
+
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+    "PingFang SC", "Microsoft YaHei UI", "Noto Sans SC", sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI Variable Text", "Segoe UI",
+    system-ui, sans-serif;
+  --font-code: "Cascadia Code", "Cascadia Mono", ui-monospace, SFMono-Regular,
+    Consolas, monospace;
+
+  /* Accent is overridden at runtime by the theme provider (presets + picker). */
+  --accent: #0f6cbd;
+  --accent-hi: #0b5a9e;
+  --accent-soft: color-mix(in srgb, var(--accent) 12%, transparent);
+  --accent-line: color-mix(in srgb, var(--accent) 34%, transparent);
+  --accent-ink: #0b5392;
+  --on-accent: #ffffff;
+
+  --text: #1b1b1b;
+  --text2: #454545;
+  --text3: #737373;
+  --text4: #9b9b9b;
+  --stroke: rgba(0, 0, 0, 0.07);
+  --stroke2: rgba(0, 0, 0, 0.13);
+  --stroke3: rgba(0, 0, 0, 0.24);
+  --fill: rgba(255, 255, 255, 0.7);
+  --fill2: rgba(255, 255, 255, 0.45);
+  --hover: rgba(0, 0, 0, 0.035);
+  --press: rgba(0, 0, 0, 0.07);
+  --panel: rgba(255, 255, 255, 0.62);
+  --panel-solid: rgba(246, 247, 249, 0.99);
+
+  --sh1: 0 1px 2px rgba(0, 0, 0, 0.09);
+  --sh2: 0 8px 22px rgba(0, 0, 0, 0.1);
+  --sh3: 0 26px 64px rgba(0, 0, 0, 0.22);
+
+  --blur: blur(30px) saturate(1.6);
+  --blur2: blur(48px) saturate(1.8);
+
+  --r1: 4px;
+  --r2: 6px;
+  --r3: 8px;
+  --r4: 12px;
+  --rf: 999px;
+
+  --row: 42px;
+  --ease-fluent: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.dark {
+  --accent: #60cdff;
+  --accent-hi: #8fdcff;
+  --accent-ink: #9adcff;
+  --on-accent: #003350;
+
+  --text: #ffffff;
+  --text2: rgba(255, 255, 255, 0.86);
+  --text3: rgba(255, 255, 255, 0.6);
+  --text4: rgba(255, 255, 255, 0.44);
+  --stroke: rgba(255, 255, 255, 0.075);
+  --stroke2: rgba(255, 255, 255, 0.14);
+  --stroke3: rgba(255, 255, 255, 0.22);
+  --fill: rgba(255, 255, 255, 0.055);
+  --fill2: rgba(255, 255, 255, 0.038);
+  --hover: rgba(255, 255, 255, 0.075);
+  --press: rgba(255, 255, 255, 0.115);
+  --panel: rgba(38, 38, 38, 0.62);
+  --panel-solid: rgba(34, 34, 34, 0.99);
+
+  --sh1: 0 1px 2px rgba(0, 0, 0, 0.34);
+  --sh2: 0 8px 22px rgba(0, 0, 0, 0.44);
+  --sh3: 0 26px 64px rgba(0, 0, 0, 0.6);
+}
+
+/* Acrylic off => opaque surfaces. Toggled by the appearance store. */
+[data-acrylic="off"] .mica-acrylic {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+  background: var(--panel-solid) !important;
+}
+
+[data-density="compact"] {
+  --row: 34px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-ui);
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  background: var(--mica-base, #eef1f5);
+}
+
+.dark body {
+  background: #0f1113;
+}
+
+/* Mica: the long-lived window backdrop. */
+.mica-surface {
+  background-image:
+    radial-gradient(118% 84% at 4% -14%, var(--mica-a, rgba(15, 108, 189, 0.2)) 0%, transparent 54%),
+    radial-gradient(96% 76% at 104% 112%, var(--mica-b, rgba(0, 145, 150, 0.15)) 0%, transparent 56%);
+  background-color: var(--mica-base, #f6f8fb);
+}
+
+.dark .mica-surface {
+  --mica-base: #141619;
+  --mica-a: rgba(96, 205, 255, 0.17);
+  --mica-b: rgba(138, 108, 255, 0.2);
+}
+
+/* Acrylic: transient surfaces only. */
+.mica-acrylic {
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+  background: var(--panel);
+}
+
+.mica-acrylic-strong {
+  backdrop-filter: var(--blur2);
+  -webkit-backdrop-filter: var(--blur2);
+  background: var(--panel);
+}
+
+.fluent-focus:focus-visible {
+  outline: 2px solid var(--text);
+  outline-offset: 2px;
+  border-radius: var(--r1);
+}
+
+/* Numeric columns use tabular figures so prices stay vertically aligned. */
+.tnum {
+  font-family: var(--font-code);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.2px;
+}
+
+.scroll-thin {
+  scrollbar-width: thin;
+}
+.scroll-thin::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text) 20%, transparent);
+  border-radius: 99px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Data table layout.
+
+   Two presentations share one dataset:
+     >= 1024px  virtualised grid rows
+     <  1024px  card list (independent information architecture, not a
+                squeezed table)
+   Grid templates live here rather than in utility classes so the column count
+   can never drift out of sync with the header.
+--------------------------------------------------------------------------- */
+
+.tbl-head,
+.tbl-row {
+  display: grid;
+  grid-template-columns:
+    minmax(190px, 2.4fr) 82px 82px 82px 86px minmax(140px, 1.5fr) 76px;
+  align-items: center;
+}
+
+@media (max-width: 1439px) {
+  /* Cache and updated columns are the first to go when space is tight. */
+  .tbl-head,
+  .tbl-row {
+    grid-template-columns:
+      minmax(170px, 2.2fr) 80px 80px 84px minmax(130px, 1.4fr);
+  }
+  .tbl-col-cache,
+  .tbl-col-updated {
+    display: none;
+  }
+}
+
+@media (max-width: 1023px) {
+  .tbl-head,
+  .tbl-desktop {
+    display: none !important;
+  }
+  .tbl-mobile {
+    display: flex !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  .tbl-mobile {
+    display: none !important;
+  }
+}
+
+/* Side navigation collapses to the bottom tab bar on small screens. */
+@media (max-width: 1023px) {
+  .shell-nav {
+    display: none !important;
+  }
+  .shell-grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
+  .shell-tabbar {
+    display: flex !important;
+  }
+}
+
+@media (min-width: 1024px) {
+  .shell-tabbar {
+    display: none !important;
+  }
+}
+
+/* Charts are desktop-only by product decision. */
+@media (max-width: 1023px) {
+  .desktop-only {
+    display: none !important;
+  }
+}
+
+/* The appearance flyout is mounted once and anchored to whichever chrome is
+   visible: above the bottom tab bar on phones, beside the rail on desktop. */
+.shell-flyout {
+  top: 44px;
+  right: 8px;
+}
+
+@media (min-width: 1024px) {
+  .shell-flyout {
+    top: auto;
+    right: auto;
+    bottom: 54px;
+    left: 8px;
+  }
+}

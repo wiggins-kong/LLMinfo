@@ -1,0 +1,12 @@
+node_modules
+.next
+data
+.scratch
+demo
+.git
+.github
+test-results
+playwright-report
+*.log
+.env
+.env.local
