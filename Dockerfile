@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # ---------------------------------------------------------------------------
-# LLMinfo — single-container Next.js + SQLite image (linux/amd64)
+# LLMinfo - single-container Next.js + SQLite image (linux/amd64)
 #
 # Debian slim rather than Alpine: better-sqlite3 ships a glibc prebuild
 # (prebuilds/linux-x64.node) so no compiler is needed, and musl would force a
@@ -15,7 +15,20 @@ ENV NEXT_TELEMETRY_DISABLED=1
 # Only the manifests, so dependency installation is cached independently of
 # source changes.
 COPY package.json package-lock.json ./
-RUN npm ci --no-audit --no-fund
+
+# --ignore-scripts is REQUIRED here, and it must be an inline flag rather than
+# an ENV (an ENV would also suppress `postbuild` in the builder stage below).
+#
+# Why: better-sqlite3 ships prebuilds/linux-x64.node and its tarball sets
+# `"gypfile": false` precisely so npm will not compile it. But package-lock.json
+# does not record that field, and npm decides by `pkg.gypfile !== false`, so on
+# a lockfile-driven `npm ci` it synthesises `node-gyp rebuild`. node:24-slim has
+# no Python, so the install aborts.
+#
+# Skipping install scripts is safe for this tree: the only package that
+# declares one is esbuild, whose postinstall merely validates and copies the
+# platform binary that npm already unpacked from optionalDependencies.
+RUN npm ci --ignore-scripts --no-audit --no-fund
 
 
 FROM node:24-slim AS builder
@@ -26,11 +39,15 @@ ENV NODE_ENV=production
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# `next build` evaluates route modules; point DATA_DIR at a scratch path so the
-# build never touches (or locks) a real volume.
+# `next build` evaluates route modules, which construct the auth object and so
+# read AUTH_SECRET. A throwaway value is supplied inline for the build only:
+# as a plain shell variable it never becomes an image layer, and it avoids
+# Docker's SecretsUsedInArgOrEnv warning. It is never used to sign anything.
+#
+# DATA_DIR points at a scratch path so the build cannot touch (or lock) a real
+# volume.
 ENV DATA_DIR=/tmp/build-data
-ENV AUTH_SECRET=build-time-placeholder-not-used-at-runtime
-RUN npm run build
+RUN AUTH_SECRET=build-only-placeholder-not-a-real-secret npm run build
 
 
 FROM node:24-slim AS runner
@@ -56,6 +73,19 @@ RUN groupadd --system --gid 1001 nodejs \
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+# Container-side admin tooling (`npm run create-user`, `npm run migrate`).
+#
+# These run against the TypeScript sources directly: there is no bundler in the
+# runtime image, and Node 24 strips types natively. Only the two scripts that
+# are meaningful at runtime plus the two modules they import are copied, which
+# keeps this to a few KB rather than shipping the whole src tree (or tsx and
+# its ~11 MB of dependencies). gen-auth-schema and prepare-standalone are
+# build-time tools and stay out of the runtime image.
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/create-user.ts ./scripts/create-user.ts
+COPY --from=builder --chown=nextjs:nodejs /app/scripts/migrate.ts ./scripts/migrate.ts
+COPY --from=builder --chown=nextjs:nodejs /app/src/db/schema-ddl.ts ./src/db/schema-ddl.ts
+COPY --from=builder --chown=nextjs:nodejs /app/src/lib/user-admin.ts ./src/lib/user-admin.ts
 
 USER nextjs
 EXPOSE 3000

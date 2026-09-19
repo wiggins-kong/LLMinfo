@@ -5,7 +5,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { SCHEMA_DDL } from "../src/db/schema-ddl";
+import { SCHEMA_DDL } from "../src/db/schema-ddl.ts";
 
 const dataDir = process.env.DATA_DIR ?? "./data";
 const resolved = path.resolve(dataDir);

@@ -9,8 +9,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
-import { SCHEMA_DDL } from "../src/db/schema-ddl";
-import { createUser } from "../src/lib/user-admin";
+import { SCHEMA_DDL } from "../src/db/schema-ddl.ts";
+import { createUser } from "../src/lib/user-admin.ts";
 
 const [email, password, name] = process.argv.slice(2);
 

@@ -107,6 +107,9 @@ docker compose cp llminfo:/data/llminfo.db ./backup-$(date +%F).db
 docker compose exec llminfo npm run create-user -- user@example.com '一个足够长的密码' '显示名'
 ```
 
+> 该脚本在容器内直接用 Node 运行 TypeScript（Node 24 原生类型擦除），
+> 不依赖 `tsx` 或任何构建工具，因此运行镜像保持精简。
+
 ### 忘记密码 / 丢失 TOTP
 
 两种方式：

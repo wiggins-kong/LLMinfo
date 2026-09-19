@@ -7,7 +7,19 @@
 
 ## [Unreleased]
 
-暂无。
+### Fixed
+
+- **CI 镜像构建失败**（`gyp ERR! find Python`）：`better-sqlite3` 的 tarball 声明了
+  `"gypfile": false` 以阻止编译，但 `package-lock.json` 不记录该字段，npm 在
+  lockfile 驱动的 `npm ci` 下判定 `pkg.gypfile !== false` 成立，合成出
+  `node-gyp rebuild`，而 `node:24-slim` 没有 Python。改为 `npm ci --ignore-scripts`
+  （行内 flag，非 ENV，否则会连带屏蔽 `postbuild`）
+- **容器内 `npm run create-user` / `npm run migrate` 不可用**：standalone 产物不含
+  `scripts/` 与 `src/`，且运行镜像没有 `tsx`。改为在 Dockerfile 中显式复制这两份
+  脚本及其依赖的模块，并让 npm 脚本直接用 `node` 运行（Node 24 原生类型擦除）
+- 移除构建阶段 `AUTH_SECRET` 的 `ENV` 声明（改用行内变量），消除 Docker 的
+  `SecretsUsedInArgOrEnv` 警告
+
 
 ## [1.0.0] - 2026-09-19
 

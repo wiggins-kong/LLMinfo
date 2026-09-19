@@ -14,9 +14,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",
-    "create-user": "tsx scripts/create-user.ts",
+    "create-user": "node scripts/create-user.ts",
     "gen-auth-schema": "tsx scripts/gen-auth-schema.ts",
-    "migrate": "tsx scripts/migrate.ts",
+    "migrate": "node scripts/migrate.ts",
     "postbuild": "node scripts/prepare-standalone.mjs",
     "start:standalone": "node .next/standalone/server.js"
   },

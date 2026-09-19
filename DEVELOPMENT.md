@@ -333,12 +333,34 @@ CI（`.github/workflows/docker.yml`）在类型检查与单元测试通过后构
 `linux/amd64` 镜像并推送 `ghcr.io/wiggins-kong/llminfo`，标签为
 `latest` 与 `sha-<短哈希>`。
 
-Dockerfile 的三个关键点：
+Dockerfile 的五个关键点：
 
 1. 基础镜像用 `node:24-slim`（Debian）而非 Alpine——`better-sqlite3`
    自带 glibc 预编译产物，Alpine 会退化成源码编译。
-2. 构建阶段把 `DATA_DIR` 指向 `/tmp`，避免 `next build` 触碰真实数据卷。
-3. `postbuild` 会把 `.next/static` 与 `public/` 复制进 standalone 产物；
+
+2. **`npm ci` 必须加 `--ignore-scripts`，且必须是行内 flag 而不是 ENV。**
+   `better-sqlite3` 的 tarball 里写了 `"gypfile": false`（作者本意就是阻止
+   npm 编译，因为它自带 `prebuilds/`），但 `package-lock.json` **不记录**这个
+   字段，而 npm 的判定是 `pkg.gypfile !== false`——在 lockfile 驱动的
+   `npm ci` 下缺字段等于 `undefined !== false`，于是 npm 合成出
+   `node-gyp rebuild`，而 `node:24-slim` 没有 Python，安装直接失败。
+
+   `npm install` 读的是 tarball、能拿到 `gypfile: false`，所以本地正常、
+   只有容器里会炸。这点非常反直觉，改动前请先读本节。
+
+   用 ENV 而非行内 flag 会连带屏蔽同阶段的 `postbuild`，导致 standalone
+   产物缺少静态资源。
+
+   跳过 install 脚本对本依赖树是安全的：唯一声明脚本的包是 `esbuild`，
+   它的 postinstall 只是校验/拷贝 npm 已从 optionalDependencies 解开的
+   平台二进制；跳过之后 esbuild 与 tsx 仍实测可用。
+
+3. 构建阶段把 `DATA_DIR` 指向 `/tmp`，避免 `next build` 触碰真实数据卷。
+
+4. `AUTH_SECRET` 以行内 shell 变量形式只在构建命令里生效，不用 `ENV`——
+   `ENV` 会永久留在镜像层并触发 Docker 的 SecretsUsedInArgOrEnv 警告。
+
+5. `postbuild` 会把 `.next/static` 与 `public/` 复制进 standalone 产物；
    Next.js 不会自动做这件事，**漏掉会导致线上静态资源全部 404**。
 
 ### NAS 部署
@@ -369,6 +391,8 @@ SakuraFrp 侧：创建 HTTP 隧道指向 NAS 内网 IP 的 3000 端口，绑定�
 | `SQLITE_BUSY`（构建时） | 有模块在顶层打开了数据库。连接必须惰性创建 |
 | 表格滚动卡顿 | 检查是否有新增元素带了 `backdrop-filter` |
 | E2E 超时在登录步骤 | 先 `npm run build`；或限流生效，清空 `rateLimit` 表 |
+| CI 构建报 `gyp ERR! find Python` | `npm ci` 缺 `--ignore-scripts`，npm 因 lockfile 缺 `gypfile` 字段而合成 node-gyp。见 §10 |
+| 容器内 `npm run create-user` 报找不到模块 | 镜像缺 `scripts/` 或 `src/*.ts`。Dockerfile 的 runner 阶段必须显式 COPY 这四份文件 |
 
 ---
 
