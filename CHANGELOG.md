@@ -5,6 +5,17 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [1.0.2] - 2026-09-20
+
+### Fixed
+
+- **NAS bind mount 权限仍可能阻止启动**：新增 `PUID` / `PGID` 支持。容器以
+  root 启动 entrypoint，按这两个 ID 修正 `/data` 所有权后再降权运行应用，
+  因此不需要在 NAS 上手工执行 `chown`；未填写时沿用 `1001:1001`
+- **容器内管理命令可能以 root 写入数据**：文档中的 `docker compose exec
+  --user nextjs` 改为 `docker compose run --rm`，一次性容器会经过 entrypoint，
+  按 `PUID` / `PGID` 降权后执行备份或建用户命令
+
 ## [1.0.1] - 2026-09-20
 
 ### Added
@@ -187,5 +198,6 @@
 - 注意：SakuraFrp 的「访问认证」功能**仅支持 TCP/UDP 隧道**，HTTP 隧道
   不适用，因此公网暴露的安全性完全由本应用承担
 
+[1.0.2]: https://github.com/wiggins-kong/LLMinfo/releases/tag/v1.0.2
 [1.0.1]: https://github.com/wiggins-kong/LLMinfo/releases/tag/v1.0.1
 [1.0.0]: https://github.com/wiggins-kong/LLMinfo/releases/tag/v1.0.0

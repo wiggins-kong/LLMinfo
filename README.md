@@ -51,10 +51,17 @@ docker compose up -d
 镜像来自 `ghcr.io/wiggins-kong/llminfo:latest`。若 NAS 无法访问 GHCR，
 在本机执行 `docker save` 后导入即可。
 
-> 如果日志出现 `EACCES: permission denied, mkdir '/data/logos'`，说明
-> bind mount 的 `./data` 属于 root，而容器内应用以 UID 1001 运行。执行
-> `sudo chown -R 1001:1001 ./data` 后重启容器即可。新版镜像会在启动时自动
-> 修复该目录的所有权。
+如果日志出现 `EACCES: permission denied, mkdir '/data/logos'`，说明 bind
+mount 的 `./data` 不属于容器运行用户。推荐在 `.env` 中填写 NAS 上 `./data`
+的属主 UID/GID，容器启动时会自动修正 `/data` 的所有权后再降权运行：
+
+```dotenv
+PUID=1000
+PGID=1000
+```
+
+两项建议同时填写。留空时使用镜像默认的 `1001:1001`，同样会由 entrypoint
+自动修正 `/data` 的所有权，因此不需要在 NAS 上手工执行 `chown`。
 
 ### 2. 配置 SakuraFrp 隧道
 
@@ -94,7 +101,7 @@ docker compose pull && docker compose up -d
 数据库使用 WAL 模式，直接复制 `.db` 文件可能漏掉未 checkpoint 的数据。稳妥做法：
 
 ```bash
-docker compose exec --user nextjs llminfo node -e "
+docker compose run --rm llminfo node -e "
 const db = require('better-sqlite3')('/data/llminfo.db');
 db.pragma('wal_checkpoint(TRUNCATE)');
 db.close();
@@ -109,11 +116,12 @@ docker compose cp llminfo:/data/llminfo.db ./backup-$(date +%F).db
 注册接口是关闭的，加人只能在容器内执行：
 
 ```bash
-docker compose exec --user nextjs llminfo npm run create-user -- user@example.com '一个足够长的密码' '显示名'
+docker compose run --rm llminfo npm run create-user -- user@example.com '一个足够长的密码' '显示名'
 ```
 
 > 该脚本在容器内直接用 Node 运行 TypeScript（Node 24 原生类型擦除），
-> 不依赖 `tsx` 或任何构建工具，因此运行镜像保持精简。
+> 不依赖 `tsx` 或任何构建工具，因此运行镜像保持精简。`run` 会经过
+> entrypoint，按 `PUID` / `PGID` 修正 `/data` 后以对应用户执行命令。
 
 ### 忘记密码 / 丢失 TOTP
 

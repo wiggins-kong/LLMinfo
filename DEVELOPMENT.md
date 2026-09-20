@@ -297,7 +297,7 @@ npm run e2e
 WAL 模式下直接复制 `.db` 可能丢数据，先 checkpoint：
 
 ```bash
-docker compose exec --user nextjs llminfo node -e "
+docker compose run --rm llminfo node -e "
 const db = require('better-sqlite3')('/data/llminfo.db');
 db.pragma('wal_checkpoint(TRUNCATE)'); db.close();
 "
@@ -386,7 +386,8 @@ SakuraFrp 侧：创建 HTTP 隧道指向 NAS 内网 IP 的 3000 端口，绑定�
 | 现象 | 原因与处理 |
 | --- | --- |
 | `403 INVALID_ORIGIN` | 访问地址与 `APP_URL` 不一致（`localhost` vs `127.0.0.1`、端口或协议不同）。改成一致 |
-| `EACCES: permission denied, mkdir '/data/logos'` | bind mount 的 `./data` 属于 root，而容器内应用以 UID 1001 运行。执行 `sudo chown -R 1001:1001 ./data` 后重启容器；新版镜像的 entrypoint 会自动修复 |
+| `EACCES: permission denied, mkdir '/data/logos'` | bind mount 的 `./data` 不属于容器运行用户。新版镜像的 entrypoint 会按 `PUID` / `PGID` 自动修正 `/data` 所有权后降权运行；未设置时使用 `1001:1001` |
+| NAS 上不想手工 `chown` | 在 `.env` 中填写 `PUID` / `PGID`，值与 `./data` 的属主一致；留空则由 entrypoint 按 `1001:1001` 修复 `/data` 后降权运行 |
 | `Failed to initialize database adapter` | 多半是 `src/db/index.ts` 的 `has` 陷阱被删，或 `schema-ddl.ts` 缺少 better-auth 表。跑 `npm run migrate` 确认表齐全 |
 | `Too many requests` | 触发了登录限流（8 次/分钟）。等一分钟，或清空 `rateLimit` 表 |
 | 同步一直失败 | 看 `/api/status` 的 `lastError`。数据不会被清空，可放心排查 |

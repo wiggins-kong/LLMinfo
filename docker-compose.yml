@@ -11,6 +11,11 @@ services:
     container_name: llminfo
     restart: unless-stopped
     environment:
+      # Optional. Leave both blank to use UID/GID 1001, or fill in the owner
+      # of ./data on the NAS. The entrypoint repairs /data before dropping
+      # privileges, so a host-side chown is not required.
+      PUID: ${PUID:-1001}
+      PGID: ${PGID:-1001}
       # The remaining values come from the sibling .env file (see
       # .env.example). Avoid `env_file:` here: the NAS UI validates it as a
       # required file and rejects the stack when .env has not been created.
