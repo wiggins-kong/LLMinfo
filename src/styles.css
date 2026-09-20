@@ -29,6 +29,13 @@
   --rf: 999px;
   --row: 42px;
   --ease: cubic-bezier(.16, 1, .3, 1);
+  --motion-micro: 90ms;
+  --motion-transition: 160ms;
+  --motion-exit: 180ms;
+  --motion-chart: 300ms;
+  --motion-stagger: 18ms;
+  --motion-reduced: 80ms;
+  --motion-lift: 6px;
   background: #eef1f5;
 }
 
@@ -74,6 +81,8 @@ body {
 
 button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
+button { transition: transform var(--motion-micro) var(--ease), background-color var(--motion-micro) var(--ease), border-color var(--motion-micro) var(--ease), color var(--motion-micro) var(--ease); }
+button:not(:disabled):active { transform: scale(.97); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .spacer { flex: 1 1 auto; }
 .num { font-family: var(--font-code); font-variant-numeric: tabular-nums; letter-spacing: -.2px; }
@@ -82,6 +91,53 @@ button { cursor: pointer; }
 .mica-acrylic { backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur); background: var(--panel); }
 .mica-acrylic-strong { backdrop-filter: var(--blur2); -webkit-backdrop-filter: var(--blur2); background: var(--panel); }
 .scroll-thin { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--text) 22%, transparent) transparent; }
+
+.motion-content {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  overflow: hidden;
+}
+.motion-content > .tablewrap,
+.motion-content > .offers,
+.motion-content > .panel,
+.motion-content > .empty,
+.motion-content > .loading {
+  flex: 1 1 auto;
+}
+.main > .filterbar,
+.main > .savedviews,
+.main > .alert {
+  flex: 0 0 auto;
+}
+.motion-content[data-motion-reason]:not([data-motion-reason="none"]) {
+  animation: motion-content-enter var(--motion-transition) var(--ease) both;
+}
+.motion-content[data-motion-reason="startup"],
+.motion-content[data-motion-reason="sync"] {
+  animation-name: motion-content-enter;
+}
+@keyframes motion-content-enter {
+  from { opacity: 0; transform: translateY(var(--motion-lift)); }
+  to { opacity: 1; transform: translateY(0); }
+}
+[data-motion-item] {
+  animation: motion-item-enter var(--motion-transition) var(--ease) both;
+  animation-delay: var(--motion-delay, 0ms);
+}
+@keyframes motion-item-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+[data-motion-state="remove"] {
+  pointer-events: none;
+  animation: motion-item-remove 140ms var(--ease) both;
+}
+@keyframes motion-item-remove {
+  to { opacity: 0; transform: scale(.97); }
+}
 
 .shell { position: relative; display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
 .titlebar { display: flex; align-items: center; gap: 10px; height: 40px; padding-left: 14px; border-bottom: 1px solid var(--stroke); flex: 0 0 auto; }
@@ -119,6 +175,11 @@ button { cursor: pointer; }
 .toolbtn.active { border-color: var(--accent-line); background: var(--accent-soft); color: var(--accent-ink); font-weight: 600; }
 .menuwrap { position: relative; }
 .menu { position: absolute; top: 36px; right: 0; z-index: 30; display: flex; flex-direction: column; gap: 2px; width: 190px; padding: 6px; border: 1px solid var(--stroke2); border-radius: var(--r3); box-shadow: var(--sh2); }
+.menu[data-motion-enter="true"] { animation: motion-menu-enter var(--motion-transition) var(--ease) both; transform-origin: top right; }
+@keyframes motion-menu-enter {
+  from { opacity: 0; transform: translate(4px, -4px) scale(.98); }
+  to { opacity: 1; transform: none; }
+}
 .menu button { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border: 0; border-radius: var(--r2); background: transparent; color: var(--text2); text-align: left; font-size: 12px; }
 .menu button:hover { background: var(--fill2); }
 
@@ -223,6 +284,11 @@ figcaption { margin-top: 8px; color: var(--text3); font-size: 11px; }
 .iconbtn:hover { background: var(--fill2); }
 
 .flyout { position: absolute; z-index: 40; display: flex; flex-direction: column; gap: 10px; width: 248px; padding: 12px; border: 1px solid var(--stroke2); border-radius: var(--r3); box-shadow: var(--sh2); }
+.flyout[data-motion-enter="true"] { animation: motion-settings-enter var(--motion-transition) var(--ease) both; transform-origin: bottom left; }
+@keyframes motion-settings-enter {
+  from { opacity: 0; transform: translateY(6px) scale(.99); }
+  to { opacity: 1; transform: none; }
+}
 .flyout h3 { margin: 2px 0 0; color: var(--text4); font-size: 11px; letter-spacing: .6px; text-transform: uppercase; }
 .settingrow { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--text2); font-size: 12px; }
 .switch { position: relative; width: 40px; height: 20px; border: 1px solid var(--stroke2); border-radius: var(--rf); background: color-mix(in srgb, var(--text) 9%, transparent); }
@@ -236,9 +302,14 @@ figcaption { margin-top: 8px; color: var(--text3); font-size: 11px; }
 .buttonrow { display: flex; gap: 6px; }
 .buttonrow .navbtn { flex: 1 1 0; }
 
-.scrim { position: absolute; inset: 0; z-index: 15; background: color-mix(in srgb, #000 38%, transparent); transition: opacity .2s; }
-.drawer { position: absolute; top: 0; right: 0; bottom: 0; z-index: 20; display: flex; width: min(430px, 100%); flex-direction: column; border-left: 1px solid var(--stroke2); box-shadow: var(--sh2); transform: translateX(102%); visibility: hidden; transition: transform .25s var(--ease), visibility .25s; }
+.scrim { position: absolute; inset: 0; z-index: 15; background: color-mix(in srgb, #000 38%, transparent); }
+.drawer { position: absolute; top: 0; right: 0; bottom: 0; z-index: 20; display: flex; width: min(430px, 100%); flex-direction: column; border-left: 1px solid var(--stroke2); box-shadow: var(--sh2); transform: translateX(102%); visibility: hidden; }
 .drawer[data-open="true"] { transform: none; visibility: visible; }
+.drawer[data-open="true"][data-motion-enter="true"] { animation: motion-drawer-enter var(--motion-transition) var(--ease) both; }
+@keyframes motion-drawer-enter {
+  from { opacity: 0; transform: translateX(18px); }
+  to { opacity: 1; transform: none; }
+}
 .drawerhead { display: flex; align-items: flex-start; gap: 12px; padding: 16px; border-bottom: 1px solid var(--stroke); }
 .drawerhead > div { min-width: 0; flex: 1 1 auto; }
 .drawerhead h2 { margin: 0; font: 600 16px/1.25 var(--font-display); }
@@ -277,6 +348,55 @@ figcaption { margin-top: 8px; color: var(--text3); font-size: 11px; }
 
 .modal-scrim { position: absolute; inset: 0; z-index: 45; background: color-mix(in srgb, #000 30%, transparent); }
 .filterpanel { position: absolute; top: 50%; left: 50%; z-index: 50; width: min(560px, calc(100% - 32px)); transform: translate(-50%, -50%); border: 1px solid var(--stroke2); border-radius: var(--r3); box-shadow: var(--sh3); }
+.filterpanel[data-motion-enter="true"] { animation: motion-modal-enter var(--motion-transition) var(--ease) both; transform-origin: center; }
+@keyframes motion-modal-enter {
+  from { opacity: 0; transform: translate(-50%, -48%) scale(.98); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+.modal-scrim { animation: motion-fade-in var(--motion-transition) var(--ease) both; }
+@keyframes motion-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+[data-motion-state="exit"] {
+  pointer-events: none;
+}
+[data-motion-state="exit"].drawer {
+  animation: motion-drawer-exit var(--motion-exit) var(--ease) both;
+}
+[data-motion-state="exit"].flyout {
+  animation: motion-settings-exit var(--motion-exit) var(--ease) both;
+}
+[data-motion-state="exit"].menu {
+  animation: motion-menu-exit var(--motion-exit) var(--ease) both;
+}
+[data-motion-state="exit"].filterpanel {
+  animation: motion-modal-exit var(--motion-exit) var(--ease) both;
+}
+[data-motion-state="exit"].scrim,
+[data-motion-state="exit"].modal-scrim {
+  animation: motion-fade-out var(--motion-exit) var(--ease) both;
+}
+@keyframes motion-drawer-exit {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateX(18px); }
+}
+@keyframes motion-settings-exit {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translateY(6px) scale(.99); }
+}
+@keyframes motion-menu-exit {
+  from { opacity: 1; transform: none; }
+  to { opacity: 0; transform: translate(4px, -4px) scale(.98); }
+}
+@keyframes motion-modal-exit {
+  from { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  to { opacity: 0; transform: translate(-50%, -48%) scale(.98); }
+}
+@keyframes motion-fade-out {
+  to { opacity: 0; }
+}
 .filterpanel header { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; border-bottom: 1px solid var(--stroke); }
 .filterpanel h2 { margin: 0; font-size: 14px; }
 .filtergrid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 16px; }
@@ -291,6 +411,14 @@ figcaption { margin-top: 8px; color: var(--text3); font-size: 11px; }
 }
 
 @media (max-width: 1023px) {
+  :root {
+    --motion-micro: 70ms;
+    --motion-transition: 130ms;
+    --motion-exit: 150ms;
+    --motion-chart: 240ms;
+    --motion-stagger: 12ms;
+    --motion-lift: 3px;
+  }
   .shell-grid { grid-template-columns: minmax(0, 1fr); }
   .nav { display: none; }
   .mobilenav { display: flex; height: 52px; flex: 0 0 auto; align-items: stretch; border-top: 1px solid var(--stroke); }
@@ -323,5 +451,36 @@ figcaption { margin-top: 8px; color: var(--text3); font-size: 11px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after { transition-duration: .001ms !important; animation-duration: .001ms !important; }
+  :root {
+    --motion-micro: 0ms;
+    --motion-transition: var(--motion-reduced);
+    --motion-exit: var(--motion-reduced);
+    --motion-chart: 0ms;
+    --motion-stagger: 0ms;
+    --motion-lift: 0px;
+  }
+  .motion-content[data-motion-reason]:not([data-motion-reason="none"]),
+  [data-motion-item],
+  .menu,
+  .flyout,
+  .drawer[data-open="true"][data-motion-enter="true"],
+  .filterpanel,
+  .modal-scrim,
+  .flyout[data-motion-enter="true"],
+  .menu[data-motion-enter="true"] {
+    animation-name: motion-fade-in;
+    animation-duration: var(--motion-reduced);
+    transform: none;
+  }
+  [data-motion-state="remove"] {
+    animation-name: motion-fade-out;
+    animation-duration: var(--motion-reduced);
+  }
+  [data-motion-state="exit"].drawer,
+  [data-motion-state="exit"].flyout,
+  [data-motion-state="exit"].menu,
+  [data-motion-state="exit"].filterpanel {
+    animation-name: motion-fade-out;
+    animation-duration: var(--motion-reduced);
+  }
 }

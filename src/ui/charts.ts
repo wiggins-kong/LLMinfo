@@ -10,6 +10,7 @@ import { CanvasRenderer } from "echarts/renderers";
 import { formatContext } from "../lib/normalize";
 import { blendedPrice } from "../lib/pricing";
 import type { ModelAggregate } from "../lib/query-engine";
+import { motionTimings } from "./motion";
 
 echarts.use([
   ScatterChart,
@@ -35,11 +36,13 @@ function palette() {
   };
 }
 
-function baseOption(title: string) {
+function baseOption(title: string, animate: boolean) {
   const p = palette();
   return {
     backgroundColor: "transparent",
-    animation: false,
+    animation: animate,
+    animationDuration: animate ? motionTimings().chart : 0,
+    animationEasing: "cubicOut" as const,
     title: {
       text: title,
       left: 0,
@@ -81,7 +84,7 @@ function draw(node: HTMLElement, option: echarts.EChartsCoreOption): void {
   chart.resize();
 }
 
-export function valueScatter(node: HTMLElement, models: ModelAggregate[]): number {
+export function valueScatter(node: HTMLElement, models: ModelAggregate[], animate = false): number {
   const points = models
     .filter((m) => m.best && m.context)
     .map((m) => ({
@@ -89,7 +92,7 @@ export function valueScatter(node: HTMLElement, models: ModelAggregate[]): numbe
       value: [blendedPrice(m.best!.cost) ?? 0, m.context ?? 0, m.capabilityCount, m.providerCount],
     }));
   draw(node, {
-    ...baseOption("性价比分布（混合价 vs 上下文）"),
+    ...baseOption("性价比分布（混合价 vs 上下文）", animate),
     xAxis: { type: "value", ...axisStyle("混合价 USD / 百万 token"), min: 0 },
     yAxis: { type: "log", ...axisStyle("上下文 tokens") },
     series: [
@@ -105,7 +108,7 @@ export function valueScatter(node: HTMLElement, models: ModelAggregate[]): numbe
   return points.length;
 }
 
-export function providerDistribution(node: HTMLElement, models: ModelAggregate[]): void {
+export function providerDistribution(node: HTMLElement, models: ModelAggregate[], animate = false): void {
   const counts = new Map<string, number>();
   for (const model of models) {
     for (const offer of model.offers) counts.set(offer.providerName, (counts.get(offer.providerName) ?? 0) + 1);
@@ -115,7 +118,7 @@ export function providerDistribution(node: HTMLElement, models: ModelAggregate[]
     .slice(0, 12)
     .map(([name, count]) => ({ name, count }));
   draw(node, {
-    ...baseOption("供应商覆盖（报价数 Top 12）"),
+    ...baseOption("供应商覆盖（报价数 Top 12）", animate),
     grid: { left: 16, right: 40, top: 34, bottom: 16, containLabel: true },
     xAxis: { type: "value", ...axisStyle("报价数") },
     yAxis: {
@@ -136,7 +139,7 @@ export function providerDistribution(node: HTMLElement, models: ModelAggregate[]
   });
 }
 
-export function contextHistogram(node: HTMLElement, models: ModelAggregate[]): void {
+export function contextHistogram(node: HTMLElement, models: ModelAggregate[], animate = false): void {
   const buckets = [
     { label: "<32K", test: (v: number) => v < 32_768 },
     { label: "32K", test: (v: number) => v >= 32_768 && v < 131_072 },
@@ -150,7 +153,7 @@ export function contextHistogram(node: HTMLElement, models: ModelAggregate[]): v
     count: models.filter((m) => m.context !== null && bucket.test(m.context)).length,
   }));
   draw(node, {
-    ...baseOption("上下文上限分布"),
+    ...baseOption("上下文上限分布", animate),
     xAxis: { type: "category", data: data.map((d) => d.label), ...axisStyle("上下文窗口") },
     yAxis: { type: "value", ...axisStyle("模型数") },
     series: [

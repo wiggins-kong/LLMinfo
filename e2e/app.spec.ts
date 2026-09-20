@@ -78,4 +78,61 @@ test.describe("single-file app", () => {
     await page.reload();
     await expect(page.locator("#model-search")).toHaveValue("gemini", { timeout: 90_000 });
   });
+
+  test("plays a content transition when switching tabs", async ({ page }) => {
+    await openApp(page);
+    await page.locator('[data-action="tab"][data-tab="cost"]:visible').click();
+    await expect(page.locator(".motion-content")).toHaveAttribute("data-motion-reason", "tab");
+    const animation = await page
+      .locator(".motion-content")
+      .evaluate((el) => getComputedStyle(el).animationName);
+    expect(animation).toContain("motion-content-enter");
+  });
+
+  test("plays drawer exit before removing it", async ({ page }) => {
+    await openApp(page);
+    await page.locator(".row").first().locator(".rowopen").click();
+    const drawer = page.locator(".drawer[data-open='true']");
+    await expect(drawer).toBeVisible();
+    await page.locator(".drawer .iconbtn[data-action='drawer-close']").click();
+    await expect(drawer).toHaveAttribute("data-motion-state", "exit");
+    await expect(page.locator(".drawer[data-open='false']")).toBeHidden();
+  });
+
+  test("settles rapid search input before replaying content motion", async ({ page }) => {
+    await openApp(page);
+    const search = page.locator("#model-search");
+    await search.fill("c");
+    await search.fill("cl");
+    await search.fill("claude");
+    await expect(page.locator(".motion-content")).toHaveAttribute("data-motion-reason", "query", {
+      timeout: 30_000,
+    });
+    await expect(page.locator(".row").first()).toContainText(/claude/i);
+  });
+
+  test("removes a favorite with motion on the favorites page", async ({ page }) => {
+    await openApp(page);
+    const firstRow = page.locator(".row").first();
+    const modelId = await firstRow.getAttribute("data-model");
+    await firstRow.locator(".favbtn").click();
+    await page.locator('[data-action="tab"][data-tab="favorites"]:visible').click();
+    const favorite = page.locator(`.row[data-model="${modelId}"]`);
+    await expect(favorite).toBeVisible();
+    await favorite.locator(".favbtn").click();
+    await expect(favorite).toHaveAttribute("data-motion-state", "remove");
+    await expect(page.locator(`.row[data-model="${modelId}"]`)).toHaveCount(0);
+  });
+
+  test("keeps only fades when reduced motion is requested", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await openApp(page);
+    await page.locator('[data-action="tab"][data-tab="cost"]:visible').click();
+    const style = await page.locator(".motion-content").evaluate((el) => {
+      const computed = getComputedStyle(el);
+      return { name: computed.animationName, duration: computed.animationDuration };
+    });
+    expect(style.name).toContain("motion-fade-in");
+    expect(style.duration).toBe("0.08s");
+  });
 });

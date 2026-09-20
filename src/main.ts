@@ -44,6 +44,15 @@ import { contextHistogram, disposeCharts, providerDistribution, valueScatter } f
 import { createQueryClient } from "./lib/worker-client";
 import { icon, type IconName } from "./ui/icons";
 import {
+  playEnter,
+  playExit,
+  prefersReducedMotion,
+  QUERY_SETTLE_MS,
+  removalDuration,
+  type MotionReason,
+  type OverlayKind,
+} from "./ui/motion";
+import {
   capabilityList,
   context as contextText,
   escapeAttr,
@@ -124,6 +133,11 @@ const state: AppState = {
 
 let queryTimer: number | null = null;
 let logoObserver: IntersectionObserver | null = null;
+let querySequence = 0;
+let queryMotionMode: "settle" | "immediate" | "none" = "none";
+let motionReason: MotionReason = "startup";
+let queryMotionTimer: number | null = null;
+let overlayEnter: OverlayKind | null = null;
 const queryClient = createQueryClient();
 const VIRTUAL_THRESHOLD = 120;
 const VIRTUAL_ROW_HEIGHT = 42;
@@ -139,6 +153,54 @@ function q<T extends Element = HTMLElement>(selector: string, root: ParentNode =
 
 function qa<T extends Element = HTMLElement>(selector: string, root: ParentNode = document): T[] {
   return Array.from(root.querySelectorAll<T>(selector));
+}
+
+function overlayNode(kind: OverlayKind): HTMLElement | null {
+  switch (kind) {
+    case "drawer":
+      return q<HTMLElement>(".drawer");
+    case "settings":
+      return q<HTMLElement>(".flyout");
+    case "menu":
+      return q<HTMLElement>(".menu");
+    case "modal":
+      return q<HTMLElement>(".filterpanel");
+  }
+}
+
+function closeOverlay(kind: OverlayKind): void {
+  const node = overlayNode(kind);
+  if (kind === "drawer") state.selected = null;
+  else if (kind === "settings") state.settingsOpen = false;
+  else if (kind === "menu") state.exportOpen = false;
+  else state.filtersPanelOpen = false;
+  if (!node) {
+    render("none");
+    return;
+  }
+  const scrim =
+    kind === "drawer"
+      ? q<HTMLElement>(".scrim")
+      : kind === "modal"
+        ? q<HTMLElement>(".modal-scrim")
+        : null;
+  if (scrim) {
+    scrim.style.pointerEvents = "none";
+    scrim.dataset.motionState = "exit";
+  }
+  void playExit({ node, kind }).then(() => {
+    render("none");
+  });
+}
+
+function removeWithMotion(node: HTMLElement, commit: () => void): void {
+  if (prefersReducedMotion()) {
+    commit();
+    return;
+  }
+  node.dataset.motionState = "remove";
+  node.style.pointerEvents = "none";
+  window.setTimeout(commit, removalDuration());
 }
 
 function saveLocal(): void {
@@ -173,34 +235,47 @@ function setAppearance(patch: Partial<AppearanceState>): void {
   state.local.appearance = { ...state.local.appearance, ...patch };
   saveLocal();
   applyAppearance();
-  render();
+  render("none");
 }
 
 function setQuery(patch: Partial<QueryState>): void {
   state.query = { ...state.query, ...patch };
   syncUrl(state.query);
-  scheduleQuery();
+  scheduleQuery("immediate");
 }
 
 function patchFilters(patch: Partial<Filters>): void {
   state.query = { ...state.query, filters: { ...state.query.filters, ...patch } };
   syncUrl(state.query);
-  scheduleQuery();
-  render();
+  scheduleQuery("settle");
+  render("none");
 }
 
 function resetFilters(): void {
   state.query = { ...state.query, filters: { ...DEFAULT_QUERY.filters } };
   syncUrl(state.query);
-  scheduleQuery();
-  render();
+  scheduleQuery("settle");
+  render("none");
 }
 
-function scheduleQuery(): void {
+function scheduleQuery(mode: "settle" | "immediate"): void {
   if (queryTimer !== null) window.clearTimeout(queryTimer);
+  querySequence += 1;
+  if (queryMotionTimer !== null) window.clearTimeout(queryMotionTimer);
+  queryMotionTimer = null;
+  queryMotionMode = mode;
   state.pending = true;
   renderStatus();
   queryTimer = window.setTimeout(() => void runQuery(), 90);
+}
+
+function scheduleQueryMotion(sequence: number): void {
+  if (queryMotionTimer !== null) window.clearTimeout(queryMotionTimer);
+  queryMotionTimer = window.setTimeout(() => {
+    queryMotionTimer = null;
+    if (sequence !== querySequence || state.pending) return;
+    render("query");
+  }, QUERY_SETTLE_MS);
 }
 
 function renderStatus(): void {
@@ -216,6 +291,7 @@ function renderStatus(): void {
 
 async function runQuery(): Promise<void> {
   if (!state.dataset) return;
+  const sequence = querySequence;
   const response = await queryClient.run({
     dataset: state.dataset,
     filters: state.query.filters,
@@ -224,12 +300,20 @@ async function runQuery(): Promise<void> {
     view: state.query.view,
     blend: state.query.blend,
   });
+  if (sequence !== querySequence) return;
   state.models = response.models;
   state.offers = response.offers;
   state.totalModels = response.totalModels;
   state.durationMs = response.durationMs;
   state.pending = false;
-  render();
+  if (queryMotionMode === "immediate") {
+    render("query");
+  } else if (queryMotionMode === "settle") {
+    renderStatus();
+    scheduleQueryMotion(sequence);
+  } else {
+    render(motionReason === "startup" ? "startup" : "none");
+  }
 }
 
 function setProgress(progress: FetchProgress): void {
@@ -242,11 +326,13 @@ async function loadData(manual = false): Promise<void> {
   if (state.refreshing) return;
   state.refreshing = true;
   state.error = null;
-  if (manual) render();
+  if (manual) render("none");
   try {
     const result = await fetchSourceDataset(setProgress);
     const source = parseSourceDataset(result.data);
     const transformed = transformDataset(source);
+    const previousHash = state.dataset?.version ?? null;
+    const changed = previousHash !== transformed.contentHash;
     state.dataset = {
       version: transformed.contentHash,
       syncedAt: result.fetchedAt,
@@ -258,14 +344,20 @@ async function loadData(manual = false): Promise<void> {
       },
     };
     state.error = null;
-    void runQuery();
+    queryMotionMode = "none";
+    querySequence += 1;
+    await runQuery();
+    if (changed) {
+      motionReason = "sync";
+      render("sync");
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     state.error = message;
     state.progress = { ...state.progress, phase: "error", error: message, message };
   } finally {
     state.refreshing = false;
-    render();
+    render("none");
   }
 }
 
@@ -275,7 +367,7 @@ function toggleFavorite(modelId: string): void {
   else set.add(modelId);
   state.local.favorites = [...set];
   saveLocal();
-  render();
+  render("none");
 }
 
 function toggleCompare(modelId: string): void {
@@ -286,7 +378,7 @@ function toggleCompare(modelId: string): void {
   else list.splice(0, 1, modelId);
   state.local.compare = list;
   saveLocal();
-  render();
+  render("none");
 }
 
 function saveCurrentView(): void {
@@ -301,13 +393,15 @@ function saveCurrentView(): void {
   };
   state.local.savedViews = [...state.local.savedViews.filter((v) => v.name !== name), view];
   saveLocal();
-  render();
+  render("none");
 }
 
 function applySavedView(view: SavedView): void {
   state.query = readQueryStateFromSearch(view.query);
   syncUrl(state.query);
-  render();
+  queryMotionMode = "immediate";
+  querySequence += 1;
+  render("none");
   void runQuery();
 }
 
@@ -319,7 +413,7 @@ function readQueryStateFromSearch(search: string): QueryState {
 function deleteSavedView(id: string): void {
   state.local.savedViews = state.local.savedViews.filter((v) => v.id !== id);
   saveLocal();
-  render();
+  render("none");
 }
 
 function providersOf(): { id: string; name: string }[] {
@@ -357,7 +451,8 @@ function tag(label: string, tone = "neutral"): string {
   return `<span class="tag ${tone}">${escapeHtml(label)}</span>`;
 }
 
-function render(): void {
+function render(reason: MotionReason = "none"): void {
+  motionReason = reason;
   applyAppearance();
   const root = document.getElementById("app");
   if (!root) return;
@@ -377,7 +472,7 @@ function render(): void {
           ${state.tab === "models" ? renderFilterBar() : ""}
           ${renderSavedViewsBar()}
           ${state.error ? `<p class="alert" role="alert">${icon("circle-alert", 14)}<span>${escapeHtml(state.error)}</span></p>` : ""}
-          ${renderContent()}
+          <div class="motion-content" data-motion-content data-motion-reason="${motionReason}">${renderContent()}</div>
           ${renderStatusbar()}
         </main>
       </div>
@@ -387,9 +482,18 @@ function render(): void {
       ${state.selected ? renderCompareAction() : ""}
       ${state.filtersPanelOpen ? renderFilterPanel() : ""}
     </div>`;
+  if (overlayEnter) {
+    const entered = overlayNode(overlayEnter);
+    if (entered) entered.dataset.motionEnter = "true";
+    overlayEnter = null;
+  }
   hydrateLogos(root);
   setupVirtualList();
-  if (state.tab === "charts") renderCharts();
+  playEnter({ reason: motionReason, root, content: q<HTMLElement>("[data-motion-content]", root) });
+  if (state.tab === "charts") {
+    const shouldAnimateCharts = motionReason === "tab" || motionReason === "startup";
+    renderCharts(shouldAnimateCharts);
+  }
   if (focusId) {
     const restored = document.getElementById(focusId);
     if (restored instanceof HTMLInputElement || restored instanceof HTMLSelectElement) {
@@ -606,7 +710,7 @@ function renderModelList(models: ModelAggregate[]): string {
 function renderModelRow(model: ModelAggregate): string {
   const favorite = state.local.favorites.includes(model.modelId);
   const provider = model.best?.providerName ?? "—";
-  return `<div class="row" data-model="${escapeAttr(model.modelId)}">
+  return `<div class="row" data-model="${escapeAttr(model.modelId)}" data-motion-item>
     <div class="cell modelcell">
       ${logoOrTile(model.best?.providerId ?? model.modelId, model.best?.providerName ?? model.family ?? model.name, initialsOf(model.family ?? model.name), model.family ?? model.name)}
       <span class="modelmeta">
@@ -643,7 +747,7 @@ function renderOfferList(offers: OfferDTO[]): string {
 }
 
 function renderOfferRow(offer: OfferDTO): string {
-  return `<div class="offerrow">
+  return `<div class="offerrow" data-motion-item>
     ${logoOrTile(offer.providerId, offer.providerName, initialsOf(offer.providerName), offer.providerName)}
     <span class="offerprovider"><b>${escapeHtml(offer.providerName)}</b><span>${escapeHtml(offer.name)} · <span class="mono">${escapeHtml(offer.modelId)}</span></span></span>
     <span class="num strong">${price(offer.cost.input)}</span>
@@ -711,18 +815,19 @@ function renderChartsPanel(): string {
   </div>`;
 }
 
-function renderCharts(): void {
+function renderCharts(animate: boolean): void {
   const models = state.models;
+  const chartAnimate = animate && !prefersReducedMotion();
   const scatter = q<HTMLElement>('[data-chart="scatter"]');
   const providers = q<HTMLElement>('[data-chart="providers"]');
   const context = q<HTMLElement>('[data-chart="context"]');
   if (scatter) {
-    const count = valueScatter(scatter, models);
+    const count = valueScatter(scatter, models, chartAnimate);
     const caption = q('[data-caption="scatter"]');
     if (caption) caption.textContent = `共 ${count} 个模型；气泡大小表示能力数量。横轴越低越便宜，纵轴越高上下文越大。`;
   }
-  if (providers) providerDistribution(providers, models);
-  if (context) contextHistogram(context, models);
+  if (providers) providerDistribution(providers, models, chartAnimate);
+  if (context) contextHistogram(context, models, chartAnimate);
 }
 
 function renderCompare(): string {
@@ -806,8 +911,8 @@ function renderCost(): string {
     </div>
     <p class="hint">按每个模型的最低报价供应商估算，单位为 USD。缓存未标价时按输入价计费。</p>
     <div class="costlist">${shown
-      .map(
-        ({ model, offer, breakdown }) => `<div class="costrow">${tile(initialsOf(model.family ?? model.name), model.family ?? model.name, 22)}
+        .map(
+          ({ model, offer, breakdown }) => `<div class="costrow" data-motion-item>${tile(initialsOf(model.family ?? model.name), model.family ?? model.name, 22)}
           <span class="costmeta"><b>${escapeHtml(model.name)}</b><small>${escapeHtml(offer.providerName)} · 输入 ${usd(breakdown.inputCost)} · 缓存 ${usd(breakdown.cacheCost)} · 输出 ${usd(breakdown.outputCost)}</small><span class="bar"><i style="width:${Math.max(2, ((breakdown.total ?? 0) / max) * 100)}%"></i></span></span>
           <b class="num">${usd(breakdown.total)}</b></div>`,
       )
@@ -1006,18 +1111,18 @@ function onClick(event: MouseEvent): void {
   const actionNode = target.closest<HTMLElement>("[data-action]");
   if (!actionNode) {
     if (state.exportOpen && !target.closest(".menuwrap")) {
-      state.exportOpen = false;
-      render();
+      closeOverlay("menu");
     }
     return;
   }
   const action = actionNode.dataset.action;
   switch (action) {
     case "tab":
+      if (state.tab === actionNode.dataset.tab) break;
       state.tab = actionNode.dataset.tab as Tab;
       state.settingsOpen = false;
       state.exportOpen = false;
-      render();
+      render("tab");
       break;
     case "refresh":
       void loadData(true);
@@ -1025,27 +1130,28 @@ function onClick(event: MouseEvent): void {
     case "settings":
       state.settingsOpen = !state.settingsOpen;
       state.exportOpen = false;
-      render();
+      overlayEnter = state.settingsOpen ? "settings" : null;
+      render("none");
       break;
     case "settings-close":
-      state.settingsOpen = false;
-      render();
+      closeOverlay("settings");
       break;
     case "filters":
       state.filtersOpen = !state.filtersOpen;
-      render();
+      render("tab");
       break;
     case "filters-more":
       state.filtersPanelOpen = true;
-      render();
+      overlayEnter = "modal";
+      render("none");
       break;
     case "filters-close":
-      state.filtersPanelOpen = false;
-      render();
+      closeOverlay("modal");
       break;
     case "export":
       state.exportOpen = !state.exportOpen;
-      render();
+      overlayEnter = state.exportOpen ? "menu" : null;
+      render("none");
       break;
     case "export-csv": {
       const isOffer = state.query.view === "offer";
@@ -1055,7 +1161,7 @@ function onClick(event: MouseEvent): void {
         "text/csv",
       );
       state.exportOpen = false;
-      render();
+      render("none");
       break;
     }
     case "export-json": {
@@ -1066,7 +1172,7 @@ function onClick(event: MouseEvent): void {
         "application/json",
       );
       state.exportOpen = false;
-      render();
+      render("none");
       break;
     }
     case "segment":
@@ -1107,37 +1213,51 @@ function onClick(event: MouseEvent): void {
         (state.dataset ? aggregate(state.dataset, state.query.blend).find((m) => m.modelId === modelId) : undefined) ??
         null;
       state.selected = model;
-      render();
+      overlayEnter = "drawer";
+      render("none");
       break;
     }
     case "drawer-close":
-      state.selected = null;
-      render();
+      closeOverlay("drawer");
       break;
     case "favorite": {
       const row = actionNode.closest<HTMLElement>("[data-model]");
       const modelId = actionNode.dataset.model ?? row?.dataset.model;
-      if (modelId) toggleFavorite(modelId);
+      if (modelId) {
+        if (state.tab === "favorites" && state.local.favorites.includes(modelId) && row) {
+          removeWithMotion(row, () => toggleFavorite(modelId));
+        } else {
+          toggleFavorite(modelId);
+        }
+      }
       break;
     }
     case "compare-toggle": {
       const modelId = actionNode.dataset.model ?? state.selected?.modelId;
-      if (modelId) toggleCompare(modelId);
+      if (modelId) {
+        const comparisonRow =
+          state.tab === "compare" ? actionNode.closest<HTMLElement>("th") : null;
+        if (comparisonRow && state.local.compare.includes(modelId)) {
+          removeWithMotion(comparisonRow, () => toggleCompare(modelId));
+        } else {
+          toggleCompare(modelId);
+        }
+      }
       break;
     }
     case "compare-clear":
       state.local.compare = [];
       saveLocal();
-      render();
+      render("none");
       break;
     case "cost-preset":
       state.cost.inputTokens = Number(actionNode.dataset.input);
       state.cost.outputTokens = Number(actionNode.dataset.output);
-      render();
+      render("none");
       break;
     case "cost-more":
       state.cost.limit += 20;
-      render();
+      render("none");
       break;
     case "toggle-acrylic":
       setAppearance({ acrylic: !state.local.appearance.acrylic });
@@ -1156,7 +1276,7 @@ function onClick(event: MouseEvent): void {
         clearLocalData();
         state.local = { version: 1, favorites: [], savedViews: [], appearance: { ...DEFAULT_APPEARANCE }, compare: [] };
         state.settingsOpen = false;
-        render();
+        render("none");
       }
       break;
     case "view-save":
@@ -1194,7 +1314,7 @@ function onChange(event: Event): void {
   if (target.matches("[data-cost]")) {
     const key = target.dataset.cost as "inputTokens" | "outputTokens" | "cacheHitRate";
     state.cost[key] = key === "cacheHitRate" ? Number(target.value) / 100 : Math.max(0, Number(target.value));
-    render();
+    render("none");
     return;
   }
   if (target.matches('[data-role="import-file"]')) {
@@ -1208,7 +1328,7 @@ function onChange(event: Event): void {
         state.local = imported;
         saveLocal();
         applyAppearance();
-        render();
+        render("none");
       } catch (error) {
         window.alert(error instanceof Error ? error.message : String(error));
       }
@@ -1238,11 +1358,10 @@ function onKeyDown(event: KeyboardEvent): void {
     q<HTMLInputElement>("#model-search")?.focus();
   }
   if (event.key === "Escape") {
-    if (state.selected) state.selected = null;
-    else if (state.filtersPanelOpen) state.filtersPanelOpen = false;
-    else if (state.settingsOpen) state.settingsOpen = false;
-    else if (state.exportOpen) state.exportOpen = false;
-    render();
+    if (state.selected) closeOverlay("drawer");
+    else if (state.filtersPanelOpen) closeOverlay("modal");
+    else if (state.settingsOpen) closeOverlay("settings");
+    else if (state.exportOpen) closeOverlay("menu");
   }
 }
 
@@ -1269,7 +1388,7 @@ function init(): void {
   state.query = readQueryState();
   applyAppearance();
   bindGlobalListeners();
-  render();
+  render("startup");
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", applyAppearance);
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) void loadData();
