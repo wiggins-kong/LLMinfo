@@ -362,6 +362,8 @@ Dockerfile 的五个关键点：
 
 5. `postbuild` 会把 `.next/static` 与 `public/` 复制进 standalone 产物；
    Next.js 不会自动做这件事，**漏掉会导致线上静态资源全部 404**。
+   其中 `public/` 是可选目录：仓库当前没有它，脚本会跳过；Dockerfile 不再
+   单独 `COPY /app/public`，否则目录不存在时会在 runner 阶段直接构建失败。
 
 ### NAS 部署
 

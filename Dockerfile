@@ -72,7 +72,11 @@ RUN groupadd --system --gid 1001 nodejs \
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
-COPY --from=builder --chown=nextjs:nodejs /app/public ./public
+
+# `public/` is optional in this repository, and `postbuild` already mirrors it
+# into `.next/standalone` when present. Copying it separately here would make
+# Docker fail when the directory does not exist, so the standalone layer is the
+# single source of truth for runtime assets.
 
 # Container-side admin tooling (`npm run create-user`, `npm run migrate`).
 #

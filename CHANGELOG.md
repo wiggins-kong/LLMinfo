@@ -9,6 +9,10 @@
 
 ### Fixed
 
+- **CI 镜像构建仍失败**（`/app/public: not found`）：仓库没有 `public/` 目录，
+  但 Dockerfile 在 runner 阶段无条件复制它；同时 `postbuild` 已负责把
+  `public/`（存在时）镜像进 standalone。移除这条冗余复制，避免目录不存在时
+  构建失败
 - **CI 镜像构建失败**（`gyp ERR! find Python`）：`better-sqlite3` 的 tarball 声明了
   `"gypfile": false` 以阻止编译，但 `package-lock.json` 不记录该字段，npm 在
   lockfile 驱动的 `npm ci` 下判定 `pkg.gypfile !== false` 成立，合成出
