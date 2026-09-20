@@ -1,50 +1,31 @@
 {
   "name": "llminfo",
-  "version": "1.0.2",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "vite",
+    "build": "node scripts/build-html.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "e2e": "playwright test",
-    "create-user": "node scripts/create-user.ts",
-    "gen-auth-schema": "tsx scripts/gen-auth-schema.ts",
-    "migrate": "node scripts/migrate.ts",
-    "postbuild": "node scripts/prepare-standalone.mjs",
-    "start:standalone": "node .next/standalone/server.js"
+    "e2e:install": "playwright install chromium firefox webkit"
   },
   "dependencies": {
-    "@node-rs/argon2": "2.2.1",
-    "@tanstack/react-virtual": "3.14.13",
-    "better-auth": "1.7.5",
-    "better-sqlite3": "13.0.3",
-    "clsx": "2.1.1",
-    "drizzle-orm": "0.45.2",
     "echarts": "6.1.0",
-    "lucide-react": "0.474.0",
-    "next": "16.3.5",
-    "react": "19.3.0",
-    "react-dom": "19.3.0",
-    "tailwind-merge": "3.3.1",
+    "lucide": "1.47.0",
     "zod": "4.6.5"
   },
   "devDependencies": {
     "@playwright/test": "1.56.1",
-    "@tailwindcss/postcss": "4.3.3",
-    "@types/better-sqlite3": "7.6.13",
     "@types/node": "24.10.1",
-    "@types/react": "19.2.2",
-    "@types/react-dom": "19.2.2",
-    "tailwindcss": "4.3.3",
-    "tsx": "4.20.6",
+    "esbuild": "0.25.9",
     "typescript": "5.9.3",
+    "vite": "7.1.7",
     "vitest": "3.2.4"
   }
 }

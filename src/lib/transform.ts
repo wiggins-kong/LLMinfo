@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { SourceDataset } from "./source-schema";
 import {
   normalizeLimits,
@@ -51,22 +50,34 @@ function offerSortKey(offer: OfferRow): string {
 
 /** Deterministic hash over the fields the UI renders, used as the dataset ETag. */
 export function hashDataset(providers: ProviderRow[], offers: OfferRow[]): string {
-  const hash = createHash("sha256");
+  const chunks: string[] = [];
 
   const sortedProviders = [...providers].sort((a, b) => a.id.localeCompare(b.id));
   for (const p of sortedProviders) {
-    hash.update(`p:${p.id}:${p.name}:${p.npm}:${p.api ?? ""}`);
+    chunks.push(`p:${p.id}:${p.name}:${p.npm}:${p.api ?? ""}`);
   }
 
   const sortedOffers = [...offers].sort((a, b) => offerSortKey(a).localeCompare(offerSortKey(b)));
   for (const o of sortedOffers) {
-    hash.update(
+    chunks.push(
       `o:${o.providerId}:${o.modelId}:${o.cost.input}:${o.cost.output}:${o.cost.cache_read}:` +
         `${o.limits.context}:${o.lastUpdated}:${o.status ?? ""}:${o.hasCost}:${o.isFree}`,
     );
   }
 
-  return hash.digest("hex");
+  // FNV-1a over the rendered fields: deterministic across browsers, no Node
+  // crypto dependency, and sufficient for change detection (not security).
+  const input = chunks.join("\n");
+  let h1 = 0x811c9dc5;
+  let h2 = 0x01000193;
+  for (let i = 0; i < input.length; i += 1) {
+    const code = input.charCodeAt(i);
+    h1 ^= code;
+    h1 = Math.imul(h1, 0x01000193);
+    h2 ^= code + i;
+    h2 = Math.imul(h2, 0x85ebca6b);
+  }
+  return `${(h1 >>> 0).toString(16).padStart(8, "0")}${(h2 >>> 0).toString(16).padStart(8, "0")}`;
 }
 
 export function transformDataset(source: SourceDataset): TransformedDataset {
