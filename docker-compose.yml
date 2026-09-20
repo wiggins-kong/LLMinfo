@@ -10,9 +10,16 @@ services:
     image: ghcr.io/wiggins-kong/llminfo:latest
     container_name: llminfo
     restart: unless-stopped
-    env_file: .env
     environment:
-      # Keep these in sync with the volume mount below.
+      # The remaining values come from the sibling .env file (see
+      # .env.example). Avoid `env_file:` here: the NAS UI validates it as a
+      # required file and rejects the stack when .env has not been created.
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      AUTH_SECRET: ${AUTH_SECRET}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD}
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-60}
+      TRUST_PROXY_DEPTH: ${TRUST_PROXY_DEPTH:-1}
       DATA_DIR: /data
       PORT: "3000"
     ports:

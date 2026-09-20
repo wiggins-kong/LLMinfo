@@ -5,7 +5,12 @@
 格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，
 版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [1.0.1] - 2026-09-20
+
+### Added
+
+- 新增版本 Release 工作流：推送 `v*` tag 后自动从 `CHANGELOG.md` 提取对应版本
+  内容创建 GitHub Release，不附带 Docker 镜像资产
 
 ### Fixed
 
@@ -13,6 +18,13 @@
   但 Dockerfile 在 runner 阶段无条件复制它；同时 `postbuild` 已负责把
   `public/`（存在时）镜像进 standalone。移除这条冗余复制，避免目录不存在时
   构建失败
+- **绿联 NAS 的 Docker 项目提示「无效的配置文件」**：Compose 引用仓库中
+  不存在（出于安全原因未提交）的 `.env`，NAS 界面会把它当作无效栈。改为
+  在 `environment` 中直接插值，仍从同目录 `.env` 读取变量
+- **`EACCES: permission denied, mkdir '/data/logos'`**：Compose 的 bind mount
+  覆盖了镜像内 `/data` 的属主，容器内的 UID 1001 无权写入。新增
+  `scripts/docker-entrypoint.sh`，启动时修正 `/data` 所有权后降权运行；
+  当前旧镜像需在 NAS 上执行 `sudo chown -R 1001:1001 ./data`
 - **CI 镜像构建失败**（`gyp ERR! find Python`）：`better-sqlite3` 的 tarball 声明了
   `"gypfile": false` 以阻止编译，但 `package-lock.json` 不记录该字段，npm 在
   lockfile 驱动的 `npm ci` 下判定 `pkg.gypfile !== false` 成立，合成出
@@ -175,5 +187,5 @@
 - 注意：SakuraFrp 的「访问认证」功能**仅支持 TCP/UDP 隧道**，HTTP 隧道
   不适用，因此公网暴露的安全性完全由本应用承担
 
-[Unreleased]: https://github.com/wiggins-kong/LLMinfo/compare/v1.0.0...HEAD
+[1.0.1]: https://github.com/wiggins-kong/LLMinfo/releases/tag/v1.0.1
 [1.0.0]: https://github.com/wiggins-kong/LLMinfo/releases/tag/v1.0.0

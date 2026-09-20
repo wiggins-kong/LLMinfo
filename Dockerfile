@@ -61,14 +61,19 @@ ENV DATA_DIR=/data
 
 # dumb-init reaps zombies and forwards signals, so `docker stop` is graceful.
 RUN apt-get update \
- && apt-get install --no-install-recommends -y dumb-init ca-certificates \
+ && apt-get install --no-install-recommends -y dumb-init ca-certificates gosu \
  && rm -rf /var/lib/apt/lists/*
 
-# Non-root runtime: the container only needs to write /data.
+# Create the non-root runtime user. The entrypoint repairs /data ownership
+# before dropping privileges, which matters when Compose bind-mounts a
+# host directory created by root over the image's /data directory.
 RUN groupadd --system --gid 1001 nodejs \
  && useradd --system --uid 1001 --gid nodejs nextjs \
  && mkdir -p /data/logos \
  && chown -R nextjs:nodejs /data
+
+COPY scripts/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
@@ -91,7 +96,6 @@ COPY --from=builder --chown=nextjs:nodejs /app/scripts/migrate.ts ./scripts/migr
 COPY --from=builder --chown=nextjs:nodejs /app/src/db/schema-ddl.ts ./src/db/schema-ddl.ts
 COPY --from=builder --chown=nextjs:nodejs /app/src/lib/user-admin.ts ./src/lib/user-admin.ts
 
-USER nextjs
 EXPOSE 3000
 
 # The health endpoint also runs the bootstrap sequence, so a healthy container
@@ -99,5 +103,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-ENTRYPOINT ["dumb-init", "--"]
+ENTRYPOINT ["dumb-init", "--", "/usr/local/bin/docker-entrypoint.sh"]
 CMD ["node", "server.js"]

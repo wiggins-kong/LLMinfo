@@ -51,6 +51,11 @@ docker compose up -d
 镜像来自 `ghcr.io/wiggins-kong/llminfo:latest`。若 NAS 无法访问 GHCR，
 在本机执行 `docker save` 后导入即可。
 
+> 如果日志出现 `EACCES: permission denied, mkdir '/data/logos'`，说明
+> bind mount 的 `./data` 属于 root，而容器内应用以 UID 1001 运行。执行
+> `sudo chown -R 1001:1001 ./data` 后重启容器即可。新版镜像会在启动时自动
+> 修复该目录的所有权。
+
 ### 2. 配置 SakuraFrp 隧道
 
 1. 在 SakuraFrp 面板创建一个 **HTTP 隧道**，本地地址填 NAS 的内网 IP，
@@ -89,7 +94,7 @@ docker compose pull && docker compose up -d
 数据库使用 WAL 模式，直接复制 `.db` 文件可能漏掉未 checkpoint 的数据。稳妥做法：
 
 ```bash
-docker compose exec llminfo node -e "
+docker compose exec --user nextjs llminfo node -e "
 const db = require('better-sqlite3')('/data/llminfo.db');
 db.pragma('wal_checkpoint(TRUNCATE)');
 db.close();
@@ -104,7 +109,7 @@ docker compose cp llminfo:/data/llminfo.db ./backup-$(date +%F).db
 注册接口是关闭的，加人只能在容器内执行：
 
 ```bash
-docker compose exec llminfo npm run create-user -- user@example.com '一个足够长的密码' '显示名'
+docker compose exec --user nextjs llminfo npm run create-user -- user@example.com '一个足够长的密码' '显示名'
 ```
 
 > 该脚本在容器内直接用 Node 运行 TypeScript（Node 24 原生类型擦除），
