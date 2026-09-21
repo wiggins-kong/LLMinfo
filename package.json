@@ -16,7 +16,6 @@
     "e2e:install": "playwright install chromium firefox webkit"
   },
   "dependencies": {
-    "echarts": "6.1.0",
     "lucide": "1.47.0",
     "zod": "4.6.5"
   },

@@ -1,24 +1,17 @@
 import { describe, expect, it } from "vitest";
-import {
-  EMPTY_FILTERS,
-  aggregate,
-  filterModels,
-  filterOffers,
-  sortModels,
-  type Filters,
-} from "@/lib/query-engine";
+import { EMPTY_FILTERS, aggregate, filterModels, reasoningOptionLabel, sortModels } from "@/lib/query-engine";
 import type { DatasetDTO, OfferDTO } from "@/lib/types";
 
 function offer(partial: Partial<OfferDTO> & { providerId: string; modelId: string }): OfferDTO {
   return {
-    providerName: partial.providerId,
+    providerName: partial.providerName ?? partial.providerId,
     providerNpm: "",
     providerApi: null,
     providerDoc: "",
     providerEnv: [],
-    name: partial.modelId,
-    family: "test",
-    description: "",
+    name: partial.name ?? partial.modelId,
+    family: partial.family ?? null,
+    description: partial.description ?? "",
     attachment: false,
     reasoning: false,
     reasoningOptions: [],
@@ -34,167 +27,123 @@ function offer(partial: Partial<OfferDTO> & { providerId: string; modelId: strin
     experimental: false,
     inputModalities: ["text"],
     outputModalities: ["text"],
-    limits: { context: 128_000, input: null, output: 8_192 },
-    cost: {
-      input: 1,
-      output: 2,
-      cache_read: null,
-      cache_write: null,
-      reasoning: null,
-      input_audio: null,
-      output_audio: null,
-      tiers: null,
-      context_over_200k: null,
-    },
-    hasCost: true,
-    isFree: false,
-    hasTieredPricing: false,
+    limits: { context: 100_000, input: null, output: 10_000 },
     ...partial,
   };
 }
 
-const dataset: DatasetDTO = {
-  version: "test",
-  syncedAt: null,
-  counts: { providers: 3, models: 2, offers: 3 },
-  offers: [
-    offer({ providerId: "cheap", modelId: "alpha", cost: { ...offer({} as never).cost, input: 0.5, output: 1 } }),
-    offer({ providerId: "pricey", modelId: "alpha", cost: { ...offer({} as never).cost, input: 5, output: 25 } }),
+function dataset(offers: OfferDTO[]): DatasetDTO {
+  return {
+    version: "test",
+    syncedAt: null,
+    providers: [],
+    offers,
+    counts: { providers: 2, models: 1, offers: offers.length },
+  };
+}
+
+describe("model aggregation", () => {
+  const offers = [
     offer({
-      providerId: "vision",
-      modelId: "beta",
+      providerId: "acme",
+      providerName: "Acme",
+      modelId: "shared/model",
       reasoning: true,
-      inputModalities: ["text", "image"],
-      limits: { context: 1_048_576, input: null, output: 32_768 },
+      reasoningOptions: [{ type: "effort", values: ["low", "high"] }],
+      limits: { context: 200_000, input: 180_000, output: 32_000 },
     }),
-  ],
-};
+    offer({
+      providerId: "beta",
+      providerName: "Beta",
+      modelId: "shared/model",
+      reasoning: true,
+      reasoningOptions: [{ type: "effort", values: ["low", "medium", "high", "xhigh"] }],
+      limits: { context: 128_000, input: null, output: 16_000 },
+    }),
+  ];
 
-const filters = (patch: Partial<Filters> = {}): Filters => ({ ...EMPTY_FILTERS, ...patch });
-
-describe("aggregate", () => {
-  it("collapses provider offers into one row per model", () => {
-    const rows = aggregate(dataset);
-    expect(rows).toHaveLength(2);
-    const alpha = rows.find((r) => r.modelId === "alpha")!;
-    expect(alpha.providerCount).toBe(2);
-    expect(alpha.minInput).toBe(0.5);
-    expect(alpha.maxInput).toBe(5);
+  it("collapses provider offers into one model row with maximum values", () => {
+    const [model] = aggregate(dataset(offers));
+    expect(model.modelId).toBe("shared/model");
+    expect(model.providerCount).toBe(2);
+    expect(model.context).toBe(200_000);
+    expect(model.minContext).toBe(128_000);
+    expect(model.outputLimit).toBe(32_000);
+    expect(model.minOutputLimit).toBe(16_000);
   });
 
-  it("picks the cheapest provider as best", () => {
-    const alpha = aggregate(dataset).find((r) => r.modelId === "alpha")!;
-    expect(alpha.best?.providerId).toBe("cheap");
-  });
-
-  it("takes the widest context window across providers", () => {
-    const beta = aggregate(dataset).find((r) => r.modelId === "beta")!;
-    expect(beta.context).toBe(1_048_576);
-  });
-});
-
-describe("filterOffers", () => {
-  it("filters by provider", () => {
-    const rows = filterOffers(dataset, filters({ providerId: "pricey" }));
-    expect(rows).toHaveLength(1);
-    expect(rows[0].modelId).toBe("alpha");
-  });
-
-  it("requires every selected modality", () => {
-    expect(filterOffers(dataset, filters({ inputModalities: ["image"] }))).toHaveLength(1);
-    expect(filterOffers(dataset, filters({ inputModalities: ["image", "audio"] }))).toHaveLength(0);
-  });
-
-  it("filters by capability flags", () => {
-    const rows = filterOffers(dataset, filters({ reasoning: true }));
-    expect(rows).toHaveLength(1);
-    expect(rows[0].modelId).toBe("beta");
-  });
-
-  it("applies an input price ceiling inclusively", () => {
-    // beta's default offer sits exactly at 1, so <= must keep it.
-    const inclusive = filterOffers(dataset, filters({ maxInputPrice: 1 }));
-    expect(inclusive.map((r) => r.providerId).sort()).toEqual(["cheap", "vision"]);
-
-    const stricter = filterOffers(dataset, filters({ maxInputPrice: 0.9 }));
-    expect(stricter).toHaveLength(1);
-    expect(stricter[0].providerId).toBe("cheap");
-  });
-
-  it("applies a minimum context floor", () => {
-    const rows = filterOffers(dataset, filters({ minContext: 500_000 }));
-    expect(rows).toHaveLength(1);
-    expect(rows[0].modelId).toBe("beta");
-  });
-
-  it("excludes unpriced offers when a price filter is active", () => {
-    const withUnpriced: DatasetDTO = {
-      ...dataset,
-      offers: [
-        ...dataset.offers,
-        offer({
-          providerId: "nopricing",
-          modelId: "gamma",
-          hasCost: false,
-          cost: { ...dataset.offers[0].cost, input: null, output: null },
-        }),
-      ],
-    };
-    const rows = filterOffers(withUnpriced, filters({ maxInputPrice: 100 }));
-    expect(rows.some((r) => r.providerId === "nopricing")).toBe(false);
-  });
-
-  it("matches search across name, id, family and provider", () => {
-    expect(filterOffers(dataset, filters({ search: "alpha" }))).toHaveLength(2);
-    expect(filterOffers(dataset, filters({ search: "vision" }))).toHaveLength(1);
-    expect(filterOffers(dataset, filters({ search: "nothing-here" }))).toHaveLength(0);
-  });
-
-  it("treats a null status as stable when filtering by status", () => {
-    expect(filterOffers(dataset, filters({ statuses: ["stable"] }))).toHaveLength(3);
-    expect(filterOffers(dataset, filters({ statuses: ["beta"] }))).toHaveLength(0);
+  it("merges reasoning levels in canonical order", () => {
+    const [model] = aggregate(dataset(offers));
+    expect(model.reasoningSummary.levels).toEqual(["low", "medium", "high", "xhigh"]);
+    expect(model.reasoningSummary.highestLevel).toBe("xhigh");
+    expect(model.reasoningSummary.levelCount).toBe(4);
   });
 });
 
-describe("filterModels", () => {
-  it("keeps a model when any of its offers satisfies the filters", () => {
-    const rows = filterModels(aggregate(dataset), filters({ maxInputPrice: 1 }));
-    expect(rows.map((r) => r.modelId)).toContain("alpha");
+describe("model filtering", () => {
+  const models = aggregate(
+    dataset([
+      offer({
+        providerId: "acme",
+        modelId: "alpha",
+        reasoning: true,
+        toolCall: true,
+        limits: { context: 200_000, input: null, output: 32_000 },
+      }),
+      offer({
+        providerId: "beta",
+        modelId: "alpha",
+        reasoning: false,
+        limits: { context: 100_000, input: null, output: 8_000 },
+      }),
+      offer({
+        providerId: "beta",
+        modelId: "beta",
+        openWeights: true,
+        limits: { context: 64_000, input: null, output: 4_000 },
+      }),
+    ]),
+  );
+
+  it("matches any selected provider", () => {
+    const result = filterModels(models, { ...EMPTY_FILTERS, providerIds: ["beta"] });
+    expect(result.map((model) => model.modelId)).toEqual(["alpha", "beta"]);
   });
 
-  it("drops models with no qualifying offer", () => {
-    const rows = filterModels(aggregate(dataset), filters({ reasoning: true }));
-    expect(rows.map((r) => r.modelId)).toEqual(["beta"]);
+  it("keeps a model when any provider offer satisfies all filters", () => {
+    const result = filterModels(models, {
+      ...EMPTY_FILTERS,
+      providerIds: ["acme"],
+      reasoning: true,
+      minContext: 150_000,
+    });
+    expect(result.map((model) => model.modelId)).toEqual(["alpha"]);
+  });
+
+  it("supports output range and capability filters", () => {
+    expect(filterModels(models, { ...EMPTY_FILTERS, minOutputLimit: 10_000 }).map((m) => m.modelId)).toEqual(["alpha"]);
+    expect(filterModels(models, { ...EMPTY_FILTERS, openWeights: true }).map((m) => m.modelId)).toEqual(["beta"]);
   });
 });
 
-describe("sortModels", () => {
-  it("sorts ascending by input price", () => {
-    const rows = sortModels(aggregate(dataset), "input", "asc");
-    expect(rows[0].modelId).toBe("alpha");
-  });
+describe("model sorting", () => {
+  const models = aggregate(
+    dataset([
+      offer({ providerId: "a", modelId: "small", name: "Zed", limits: { context: 32_000, input: null, output: 4_000 } }),
+      offer({ providerId: "b", modelId: "large", name: "Alpha", limits: { context: 200_000, input: null, output: 32_000 } }),
+    ]),
+  );
 
-  it("sorts descending by context", () => {
-    const rows = sortModels(aggregate(dataset), "context", "desc");
-    expect(rows[0].modelId).toBe("beta");
+  it("sorts by name and numeric specification", () => {
+    expect(sortModels(models, "name", "asc").map((m) => m.modelId)).toEqual(["large", "small"]);
+    expect(sortModels(models, "context", "desc").map((m) => m.modelId)).toEqual(["large", "small"]);
   });
+});
 
-  it("always sinks missing values to the bottom regardless of direction", () => {
-    const withMissing: DatasetDTO = {
-      ...dataset,
-      offers: [
-        ...dataset.offers,
-        offer({
-          providerId: "nopricing",
-          modelId: "gamma",
-          hasCost: false,
-          cost: { ...dataset.offers[0].cost, input: null, output: null },
-        }),
-      ],
-    };
-    for (const dir of ["asc", "desc"] as const) {
-      const rows = sortModels(aggregate(withMissing), "input", dir);
-      expect(rows[rows.length - 1].modelId).toBe("gamma");
-    }
+describe("reasoning labels", () => {
+  it("formats effort, budget and toggle options", () => {
+    expect(reasoningOptionLabel({ type: "effort", values: ["low", "high"] })).toBe("low / high");
+    expect(reasoningOptionLabel({ type: "budget_tokens", min: 1024, max: 4096 })).toContain("1,024");
+    expect(reasoningOptionLabel({ type: "toggle" })).toBe("可开关");
   });
 });

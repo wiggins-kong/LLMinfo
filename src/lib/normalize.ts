@@ -1,4 +1,4 @@
-import type { Cost, CostTier, Limits, Modality, ReasoningOption } from "./types";
+import type { Limits, Modality, ReasoningOption } from "./types";
 
 /** Sentinel date used by models.dev when a field is unknown. */
 const EPOCH_SENTINEL = "1970-01-01";
@@ -7,8 +7,8 @@ export const HUGE_CONTEXT_THRESHOLD = 99_000_000;
 
 /**
  * models.dev dates come in two granularities: full dates ("2026-07-24") and
- * month-only values ("2025-04", used by ~235 offers). Both are meaningful, so
- * both are kept; only the 1970 sentinel and unparseable values become null.
+ * month-only values ("2025-04"). Both are meaningful, so both are kept; only
+ * the 1970 sentinel and unparseable values become null.
  */
 export function nullIfInvalidDate(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -24,95 +24,6 @@ export function normalizeContext(value: unknown): number | null {
     return null;
   }
   return Math.trunc(value);
-}
-
-function numOrNull(value: unknown): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
-    return null;
-  }
-  return value;
-}
-
-function parseTiers(value: unknown): CostTier[] | null {
-  if (!Array.isArray(value) || value.length === 0) return null;
-  const tiers: CostTier[] = [];
-  for (const raw of value) {
-    if (typeof raw !== "object" || raw === null) continue;
-    const entry = raw as Record<string, unknown>;
-    const tier = entry.tier as Record<string, unknown> | undefined;
-    if (!tier || typeof tier.size !== "number") continue;
-    const input = numOrNull(entry.input);
-    const output = numOrNull(entry.output);
-    if (input === null || output === null) continue;
-    tiers.push({
-      input,
-      output,
-      cache_read: numOrNull(entry.cache_read) ?? undefined,
-      cache_write: numOrNull(entry.cache_write) ?? undefined,
-      tier: { type: String(tier.type ?? "context"), size: tier.size },
-    });
-  }
-  return tiers.length > 0 ? tiers : null;
-}
-
-export interface NormalizedCost {
-  cost: Cost;
-  hasCost: boolean;
-  isFree: boolean;
-  hasTieredPricing: boolean;
-}
-
-/**
- * A missing cost object must stay `null` rather than defaulting to 0 — free and
- * unpriced are different states and the UI renders them differently.
- */
-export function normalizeCost(raw: unknown): NormalizedCost {
-  const empty: Cost = {
-    input: null,
-    output: null,
-    cache_read: null,
-    cache_write: null,
-    reasoning: null,
-    input_audio: null,
-    output_audio: null,
-    tiers: null,
-    context_over_200k: null,
-  };
-
-  if (typeof raw !== "object" || raw === null) {
-    return { cost: empty, hasCost: false, isFree: false, hasTieredPricing: false };
-  }
-
-  const source = raw as Record<string, unknown>;
-  const over200k = source.context_over_200k as Record<string, unknown> | undefined;
-
-  const cost: Cost = {
-    input: numOrNull(source.input),
-    output: numOrNull(source.output),
-    cache_read: numOrNull(source.cache_read),
-    cache_write: numOrNull(source.cache_write),
-    reasoning: numOrNull(source.reasoning),
-    input_audio: numOrNull(source.input_audio),
-    output_audio: numOrNull(source.output_audio),
-    tiers: parseTiers(source.tiers),
-    context_over_200k:
-      over200k && typeof over200k === "object"
-        ? {
-            input: numOrNull(over200k.input),
-            output: numOrNull(over200k.output),
-            cache_read: numOrNull(over200k.cache_read),
-            cache_write: numOrNull(over200k.cache_write),
-          }
-        : null,
-  };
-
-  const isFree = cost.input === 0 && cost.output === 0;
-  return {
-    cost,
-    hasCost: true,
-    isFree,
-    hasTieredPricing: cost.tiers !== null || cost.context_over_200k !== null,
-  };
 }
 
 export function normalizeLimits(raw: unknown): Limits {

@@ -41,17 +41,9 @@ function looseNumber() {
     );
 }
 
-const costTierSchema = z.object({
-  input: z.number(),
-  output: z.number(),
-  cache_read: z.number().optional(),
-  cache_write: z.number().optional(),
-  tier: z.object({ type: z.string(), size: z.number() }),
-});
-
 /**
- * Upstream emits nulls inside `reasoning_options[].values` (2 occurrences at
- * the time of writing). Filtering them out is safer than rejecting the payload.
+ * Upstream emits nulls inside `reasoning_options[].values`. Filtering them out
+ * is safer than rejecting the payload.
  */
 const reasoningOptionSchema = z.object({
   type: z.string(),
@@ -61,25 +53,6 @@ const reasoningOptionSchema = z.object({
     .transform((v) => (v ?? []).filter((x): x is string => typeof x === "string")),
   min: z.number().optional(),
   max: z.number().optional(),
-});
-
-const costSchema = z.object({
-  input: z.number().optional(),
-  output: z.number().optional(),
-  cache_read: z.number().optional(),
-  cache_write: z.number().optional(),
-  reasoning: z.number().optional(),
-  input_audio: z.number().optional(),
-  output_audio: z.number().optional(),
-  tiers: z.array(costTierSchema).optional(),
-  context_over_200k: z
-    .object({
-      input: z.number().optional(),
-      output: z.number().optional(),
-      cache_read: z.number().optional(),
-      cache_write: z.number().optional(),
-    })
-    .optional(),
 });
 
 const modalitiesSchema = z
@@ -118,7 +91,6 @@ export const sourceModelSchema = z.object({
   modalities: modalitiesSchema,
   open_weights: looseFlag(),
   limit: limitsSchema,
-  cost: costSchema.optional(),
   status: looseString(),
   experimental: z.unknown().optional(),
   provider: z.unknown().optional(),

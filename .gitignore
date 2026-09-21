@@ -1,5 +1,8 @@
 node_modules/
 llminfo.html
+.env
+data/
+e2e/.auth/
 .next/
 .vite-build/
 .build-temp/

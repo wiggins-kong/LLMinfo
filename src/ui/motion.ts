@@ -59,6 +59,14 @@ export function removalDuration(mobile = isMobileMotion()): number {
   return mobile ? REMOVE_MOBILE_MS : REMOVE_MS;
 }
 
+/**
+ * Rows recycled by the virtual scroller are recreated on every scroll frame,
+ * so they must never carry enter motion. Only a fresh result set animates.
+ */
+export function motionItemAttribute(animate: boolean): string {
+  return animate ? " data-motion-item" : "";
+}
+
 export interface EnterOptions {
   reason: MotionReason;
   root: HTMLElement;
@@ -91,6 +99,10 @@ export interface ExitOptions {
 
 export function playExit({ node, kind, duration }: ExitOptions): Promise<void> {
   if (!node) return Promise.resolve();
+  // A node that just finished entering still carries data-motion-enter, whose
+  // enter animation outranks the exit rules and would freeze it in place until
+  // the timeout removed it. Drop the flag so the exit animation starts now.
+  node.removeAttribute("data-motion-enter");
   if (prefersReducedMotion()) {
     node.style.pointerEvents = "none";
     node.dataset.motionState = "exit";

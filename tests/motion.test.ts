@@ -7,6 +7,7 @@ import {
   QUERY_SETTLE_MS,
   REMOVE_MOBILE_MS,
   REMOVE_MS,
+  motionItemAttribute,
   motionTimings,
   removalDuration,
   shouldAnimateReason,
@@ -28,6 +29,11 @@ describe("motion timings", () => {
     expect(QUERY_SETTLE_MS).toBe(250);
     expect(REMOVE_MS).toBe(140);
     expect(MAX_STAGGERED_ITEMS).toBe(6);
+  });
+
+  it("only tags rows with enter motion when the result set is fresh", () => {
+    expect(motionItemAttribute(true)).toBe(" data-motion-item");
+    expect(motionItemAttribute(false)).toBe("");
   });
 
   it("treats every explicit render reason as animatable", () => {

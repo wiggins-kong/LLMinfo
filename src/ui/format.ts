@@ -1,5 +1,4 @@
 import { formatContext } from "../lib/normalize";
-import { formatPrice, formatUsd } from "../lib/pricing";
 import type { Modality, OfferDTO } from "../lib/types";
 import type { ModelAggregate } from "../lib/query-engine";
 
@@ -11,8 +10,8 @@ export const MODALITY_LABEL: Record<Modality, string> = {
   audio: "音频",
 };
 
-export function modalityLabel(m: Modality): string {
-  return MODALITY_LABEL[m] ?? m;
+export function modalityLabel(modality: Modality): string {
+  return MODALITY_LABEL[modality] ?? modality;
 }
 
 export function shortDate(value: string | null): string {
@@ -41,7 +40,7 @@ const TONE_STYLES = [
 
 export function toneOf(seed: string): number {
   let hash = 0;
-  for (let i = 0; i < seed.length; i += 1) hash = (hash * 31 + seed.charCodeAt(i)) % 997;
+  for (let index = 0; index < seed.length; index += 1) hash = (hash * 31 + seed.charCodeAt(index)) % 997;
   return hash % TONE_STYLES.length;
 }
 
@@ -54,14 +53,6 @@ export function tile(label: string, seed: string, size = 26): string {
   return `<span class="tile" style="${tileStyle(seed)};width:${size}px;height:${size}px;font-size:${
     size <= 26 ? 11 : 15
   }px">${escapeHtml(label)}</span>`;
-}
-
-export function price(value: number | null): string {
-  return formatPrice(value);
-}
-
-export function usd(value: number | null, digits = 2): string {
-  return formatUsd(value, digits);
 }
 
 export function context(value: number | null): string {

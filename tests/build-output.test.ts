@@ -19,4 +19,13 @@ describe("single-file build output", () => {
     expect(html).toMatch(/<style>/);
     expect(html).toContain("--accent");
   });
+
+  it.skipIf(!existsSync(artifact))("does not bundle removed dashboard features", () => {
+    const html = readFileSync(artifact, "utf8");
+    expect(html).not.toContain("echarts");
+    expect(html).not.toContain("monthlyCost");
+    expect(html).not.toContain("favorites");
+    expect(html).not.toContain("compare-toggle");
+    expect(html).not.toContain("file-spreadsheet");
+  });
 });

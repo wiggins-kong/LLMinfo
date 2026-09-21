@@ -1,119 +1,138 @@
-import type { DatasetDTO, Modality, OfferDTO } from "./types";
-import { blendedPrice, type BlendWeights } from "./pricing";
+import type { DatasetDTO, Modality, OfferDTO, ReasoningOption } from "./types";
 
 export type SortKey =
   | "name"
-  | "input"
-  | "output"
-  | "blended"
-  | "cacheRead"
-  | "cacheWrite"
   | "context"
   | "outputLimit"
+  | "reasoningLevels"
   | "releaseDate"
   | "lastUpdated"
-  | "offerCount"
-  | "capabilities";
+  | "providerCount";
 
 export type SortDir = "asc" | "desc";
-export type ViewMode = "model" | "offer";
 
 export interface Filters {
   search: string;
-  providerId: string;
-  family: string;
+  providerIds: string[];
   inputModalities: Modality[];
   reasoning: boolean;
   toolCall: boolean;
   structuredOutput: boolean;
-  attachment: boolean;
-  temperature: boolean;
-  interleaved: boolean;
   openWeights: boolean;
   statuses: string[];
-  minInputPrice: number | null;
-  maxInputPrice: number | null;
   minContext: number | null;
   maxContext: number | null;
   minOutputLimit: number | null;
-  knowledgeAfter: string | null;
-  releasedAfter: string | null;
-  updatedAfter: string | null;
-  freeOnly: boolean;
-  unpricedOnly: boolean;
+  maxOutputLimit: number | null;
 }
 
 export const EMPTY_FILTERS: Filters = {
   search: "",
-  providerId: "",
-  family: "",
+  providerIds: [],
   inputModalities: [],
   reasoning: false,
   toolCall: false,
   structuredOutput: false,
-  attachment: false,
-  temperature: false,
-  interleaved: false,
   openWeights: false,
   statuses: [],
-  minInputPrice: null,
-  maxInputPrice: null,
   minContext: null,
   maxContext: null,
   minOutputLimit: null,
-  knowledgeAfter: null,
-  releasedAfter: null,
-  updatedAfter: null,
-  freeOnly: false,
-  unpricedOnly: false,
+  maxOutputLimit: null,
 };
+
+export interface ReasoningSummary {
+  supported: boolean;
+  options: ReasoningOption[];
+  levels: string[];
+  levelCount: number;
+  highestLevel: string | null;
+  budgetMin: number | null;
+  budgetMax: number | null;
+}
 
 export interface ModelAggregate {
   modelId: string;
   name: string;
   family: string | null;
+  description: string;
   offers: OfferDTO[];
-  best: OfferDTO | null;
-  bestBlended: number | null;
-  minInput: number | null;
-  maxInput: number | null;
-  minOutput: number | null;
-  maxOutput: number | null;
-  cacheRead: number | null;
+  providerCount: number;
   context: number | null;
   minContext: number | null;
+  maxContext: number | null;
+  inputLimit: number | null;
   outputLimit: number | null;
-  providerCount: number;
-  capabilityCount: number;
-  hasFree: boolean;
-  hasUnpriced: boolean;
-  openWeights: boolean;
+  minOutputLimit: number | null;
+  maxOutputLimit: number | null;
   reasoning: boolean;
+  reasoningSummary: ReasoningSummary;
   toolCall: boolean;
   structuredOutput: boolean;
   attachment: boolean;
   temperature: boolean;
   interleaved: boolean;
+  openWeights: boolean;
   inputModalities: Modality[];
+  outputModalities: Modality[];
   releaseDate: string | null;
   lastUpdated: string | null;
   statuses: string[];
+  knowledge: string | null;
+  experimental: boolean;
 }
 
-function capabilityCount(o: OfferDTO): number {
-  let n = 0;
-  if (o.reasoning) n += 1;
-  if (o.toolCall) n += 1;
-  if (o.structuredOutput) n += 1;
-  if (o.attachment) n += 1;
-  if (o.temperature) n += 1;
-  if (o.interleaved) n += 1;
-  if (o.openWeights) n += 1;
-  return n;
+const LEVEL_ORDER = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+
+function maxOf(values: (number | null)[]): number | null {
+  const present = values.filter((v): v is number => v !== null);
+  return present.length ? Math.max(...present) : null;
 }
 
-/** Group provider offers into one aggregate row per model id. */
-export function aggregate(dataset: DatasetDTO, blend: BlendWeights = "3:1"): ModelAggregate[] {
+function minOf(values: (number | null)[]): number | null {
+  const present = values.filter((v): v is number => v !== null);
+  return present.length ? Math.min(...present) : null;
+}
+
+function uniqueStrings(values: string[]): string[] {
+  return Array.from(new Set(values.filter(Boolean)));
+}
+
+function summarizeReasoning(offers: OfferDTO[]): ReasoningSummary {
+  const options: ReasoningOption[] = [];
+  const levels: string[] = [];
+  let budgetMin: number | null = null;
+  let budgetMax: number | null = null;
+
+  for (const offer of offers) {
+    for (const option of offer.reasoningOptions) {
+      const key = JSON.stringify(option);
+      if (!options.some((item) => JSON.stringify(item) === key)) options.push(option);
+      if (option.type === "effort" && option.values) levels.push(...option.values);
+      if (option.type === "budget_tokens") {
+        if (option.min !== undefined) budgetMin = budgetMin === null ? option.min : Math.min(budgetMin, option.min);
+        if (option.max !== undefined) budgetMax = budgetMax === null ? option.max : Math.max(budgetMax, option.max);
+      }
+    }
+  }
+
+  const orderedLevels = uniqueStrings(levels).sort(
+    (a, b) => LEVEL_ORDER.indexOf(a) - LEVEL_ORDER.indexOf(b),
+  );
+  const highestLevel = orderedLevels.length ? orderedLevels[orderedLevels.length - 1] : null;
+  return {
+    supported: offers.some((offer) => offer.reasoning),
+    options,
+    levels: orderedLevels,
+    levelCount: orderedLevels.length,
+    highestLevel,
+    budgetMin,
+    budgetMax,
+  };
+}
+
+/** Group provider entries into one aggregate row per model id. */
+export function aggregate(dataset: DatasetDTO): ModelAggregate[] {
   const byModel = new Map<string, OfferDTO[]>();
   for (const offer of dataset.offers) {
     const bucket = byModel.get(offer.modelId);
@@ -123,80 +142,64 @@ export function aggregate(dataset: DatasetDTO, blend: BlendWeights = "3:1"): Mod
 
   const out: ModelAggregate[] = [];
   for (const [modelId, offers] of byModel) {
-    const priced = offers.filter((o) => o.cost.input !== null || o.cost.output !== null);
-    const ranked = [...priced].sort((a, b) => {
-      const ab = blendedPrice(a.cost, blend);
-      const bb = blendedPrice(b.cost, blend);
-      const av = ab ?? Number.POSITIVE_INFINITY;
-      const bv = bb ?? Number.POSITIVE_INFINITY;
-      if (av !== bv) return av - bv;
-      return a.providerId.localeCompare(b.providerId);
-    });
-    const best = ranked[0] ?? null;
-
-    const inputs = offers.map((o) => o.cost.input).filter((v): v is number => v !== null);
-    const outputs = offers.map((o) => o.cost.output).filter((v): v is number => v !== null);
-    const contexts = offers.map((o) => o.limits.context).filter((v): v is number => v !== null);
-    const outputLimits = offers.map((o) => o.limits.output).filter((v): v is number => v !== null);
+    const contexts = offers.map((offer) => offer.limits.context);
+    const outputs = offers.map((offer) => offer.limits.output);
+    const inputs = offers.map((offer) => offer.limits.input);
     const modalities = new Set<Modality>();
-    for (const o of offers) for (const m of o.inputModalities) modalities.add(m);
+    const outputModalities = new Set<Modality>();
+    for (const offer of offers) {
+      for (const modality of offer.inputModalities) modalities.add(modality);
+      for (const modality of offer.outputModalities) outputModalities.add(modality);
+    }
 
-    const statuses = Array.from(
-      new Set(offers.map((o) => o.status).filter((s): s is string => s !== null)),
-    );
-
+    const reasoningSummary = summarizeReasoning(offers);
     out.push({
       modelId,
       name: offers[0].name,
       family: offers[0].family,
+      description: offers.find((offer) => offer.description)?.description ?? "",
       offers,
-      best,
-      bestBlended: best ? blendedPrice(best.cost, blend) : null,
-      minInput: inputs.length ? Math.min(...inputs) : null,
-      maxInput: inputs.length ? Math.max(...inputs) : null,
-      minOutput: outputs.length ? Math.min(...outputs) : null,
-      maxOutput: outputs.length ? Math.max(...outputs) : null,
-      cacheRead: best?.cost.cache_read ?? null,
-      context: contexts.length ? Math.max(...contexts) : null,
-      minContext: contexts.length ? Math.min(...contexts) : null,
-      outputLimit: outputLimits.length ? Math.max(...outputLimits) : null,
       providerCount: offers.length,
-      capabilityCount: Math.max(...offers.map(capabilityCount)),
-      hasFree: offers.some((o) => o.isFree),
-      hasUnpriced: offers.some((o) => !o.hasCost),
-      openWeights: offers.some((o) => o.openWeights),
-      reasoning: offers.some((o) => o.reasoning),
-      toolCall: offers.some((o) => o.toolCall),
-      structuredOutput: offers.some((o) => o.structuredOutput),
-      attachment: offers.some((o) => o.attachment),
-      temperature: offers.some((o) => o.temperature),
-      interleaved: offers.some((o) => o.interleaved),
+      context: maxOf(contexts),
+      minContext: minOf(contexts),
+      maxContext: maxOf(contexts),
+      inputLimit: maxOf(inputs),
+      outputLimit: maxOf(outputs),
+      minOutputLimit: minOf(outputs),
+      maxOutputLimit: maxOf(outputs),
+      reasoning: reasoningSummary.supported,
+      reasoningSummary,
+      toolCall: offers.some((offer) => offer.toolCall),
+      structuredOutput: offers.some((offer) => offer.structuredOutput),
+      attachment: offers.some((offer) => offer.attachment),
+      temperature: offers.some((offer) => offer.temperature),
+      interleaved: offers.some((offer) => offer.interleaved),
+      openWeights: offers.some((offer) => offer.openWeights),
       inputModalities: Array.from(modalities),
-      releaseDate: bestDate(offers.map((o) => o.releaseDate), "max"),
-      lastUpdated: bestDate(offers.map((o) => o.lastUpdated), "max"),
-      statuses,
+      outputModalities: Array.from(outputModalities),
+      releaseDate: bestDate(offers.map((offer) => offer.releaseDate), "max"),
+      lastUpdated: bestDate(offers.map((offer) => offer.lastUpdated), "max"),
+      statuses: uniqueStrings(
+        offers.map((offer) => offer.status).filter((status): status is string => status !== null),
+      ),
+      knowledge: bestDate(offers.map((offer) => offer.knowledge), "max"),
+      experimental: offers.some((offer) => offer.experimental),
     });
   }
   return out;
 }
 
 function bestDate(values: (string | null)[], mode: "min" | "max"): string | null {
-  const valid = values.filter((v): v is string => v !== null);
+  const valid = values.filter((value): value is string => value !== null);
   if (!valid.length) return null;
   valid.sort();
   return mode === "min" ? valid[0] : valid[valid.length - 1];
 }
 
-function matchesCommon(offer: OfferDTO, filters: Filters, blend: BlendWeights): boolean {
-  if (filters.providerId && offer.providerId !== filters.providerId) return false;
-  if (filters.family && offer.family !== filters.family) return false;
-
+function matchesCommon(offer: OfferDTO, filters: Filters): boolean {
   if (filters.reasoning && !offer.reasoning) return false;
   if (filters.toolCall && !offer.toolCall) return false;
   if (filters.structuredOutput && !offer.structuredOutput) return false;
-  if (filters.attachment && !offer.attachment) return false;
-  if (filters.temperature && !offer.temperature) return false;
-  if (filters.interleaved && !offer.interleaved) return false;
   if (filters.openWeights && !offer.openWeights) return false;
 
   if (filters.statuses.length > 0) {
@@ -205,18 +208,9 @@ function matchesCommon(offer: OfferDTO, filters: Filters, blend: BlendWeights): 
   }
 
   if (filters.inputModalities.length > 0) {
-    for (const m of filters.inputModalities) {
-      if (!offer.inputModalities.includes(m)) return false;
+    for (const modality of filters.inputModalities) {
+      if (!offer.inputModalities.includes(modality)) return false;
     }
-  }
-
-  if (filters.freeOnly && !offer.isFree) return false;
-  if (filters.unpricedOnly && offer.hasCost) return false;
-
-  if (filters.minInputPrice !== null || filters.maxInputPrice !== null) {
-    if (offer.cost.input === null) return false;
-    if (filters.minInputPrice !== null && offer.cost.input < filters.minInputPrice) return false;
-    if (filters.maxInputPrice !== null && offer.cost.input > filters.maxInputPrice) return false;
   }
 
   if (filters.minContext !== null || filters.maxContext !== null) {
@@ -225,22 +219,12 @@ function matchesCommon(offer: OfferDTO, filters: Filters, blend: BlendWeights): 
     if (filters.maxContext !== null && offer.limits.context > filters.maxContext) return false;
   }
 
-  if (filters.minOutputLimit !== null) {
-    if (offer.limits.output === null || offer.limits.output < filters.minOutputLimit) return false;
+  if (filters.minOutputLimit !== null || filters.maxOutputLimit !== null) {
+    if (offer.limits.output === null) return false;
+    if (filters.minOutputLimit !== null && offer.limits.output < filters.minOutputLimit) return false;
+    if (filters.maxOutputLimit !== null && offer.limits.output > filters.maxOutputLimit) return false;
   }
 
-  if (filters.knowledgeAfter && (!offer.knowledge || offer.knowledge < filters.knowledgeAfter)) {
-    return false;
-  }
-  if (filters.releasedAfter && (!offer.releaseDate || offer.releaseDate < filters.releasedAfter)) {
-    return false;
-  }
-  if (filters.updatedAfter && (!offer.lastUpdated || offer.lastUpdated < filters.updatedAfter)) {
-    return false;
-  }
-
-  // Blend is read here so price-band filtering stays consistent with sorting.
-  void blend;
   return true;
 }
 
@@ -256,54 +240,31 @@ export function matchesSearch(offer: OfferDTO, search: string): boolean {
   );
 }
 
-export function filterOffers(
-  dataset: DatasetDTO,
-  filters: Filters,
-  blend: BlendWeights = "3:1",
-): OfferDTO[] {
-  return dataset.offers.filter(
-    (offer) => matchesSearch(offer, filters.search) && matchesCommon(offer, filters, blend),
-  );
-}
-
-export function filterModels(
-  aggregates: ModelAggregate[],
-  filters: Filters,
-  blend: BlendWeights = "3:1",
-): ModelAggregate[] {
-  return aggregates.filter((agg) => {
+export function filterModels(aggregates: ModelAggregate[], filters: Filters): ModelAggregate[] {
+  return aggregates.filter((model) => {
     if (filters.search) {
       const needle = filters.search.toLowerCase();
       const haystack = [
-        agg.name,
-        agg.modelId,
-        agg.family ?? "",
-        agg.best?.providerName ?? "",
-        ...agg.offers.map((o) => o.providerName),
+        model.name,
+        model.modelId,
+        model.family ?? "",
+        model.description,
+        ...model.offers.map((offer) => offer.providerName),
       ]
         .join(" ")
         .toLowerCase();
       if (!haystack.includes(needle)) return false;
     }
 
-    // A model survives when at least one of its offers satisfies every active
-    // offer-level constraint — that is what "show me models I can actually use
-    // under these conditions" means.
-    const hasMatchingOffer = agg.offers.some((offer) => {
-      if (!matchesCommon(offer, filters, blend)) return false;
-      return true;
+    const matchingOffers = model.offers.filter((offer) => {
+      if (filters.providerIds.length && !filters.providerIds.includes(offer.providerId)) return false;
+      return matchesCommon(offer, filters);
     });
-    if (!hasMatchingOffer) return false;
-
-    if (filters.family && agg.family !== filters.family) return false;
-    if (filters.providerId && !agg.offers.some((o) => o.providerId === filters.providerId)) return false;
-
-    return true;
+    return matchingOffers.length > 0;
   });
 }
 
 function compareNullable(a: number | null, b: number | null, dir: SortDir): number {
-  // Missing values always sink to the bottom regardless of direction.
   if (a === null && b === null) return 0;
   if (a === null) return 1;
   if (b === null) return -1;
@@ -317,82 +278,43 @@ function compareNullableDate(a: string | null, b: string | null, dir: SortDir): 
   return dir === "asc" ? a.localeCompare(b) : b.localeCompare(a);
 }
 
-export function sortModels(
-  rows: ModelAggregate[],
-  key: SortKey,
-  dir: SortDir,
-  blend: BlendWeights = "3:1",
-): ModelAggregate[] {
+export function sortModels(rows: ModelAggregate[], key: SortKey, dir: SortDir): ModelAggregate[] {
   const copy = [...rows];
   copy.sort((a, b) => {
     switch (key) {
       case "name":
         return dir === "asc" ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
-      case "input":
-        return compareNullable(a.minInput, b.minInput, dir);
-      case "output":
-        return compareNullable(a.minOutput, b.minOutput, dir);
-      case "blended":
-        return compareNullable(a.bestBlended, b.bestBlended, dir);
-      case "cacheRead":
-        return compareNullable(a.cacheRead, b.cacheRead, dir);
-      case "cacheWrite":
-        return compareNullable(a.best?.cost.cache_write ?? null, b.best?.cost.cache_write ?? null, dir);
       case "context":
         return compareNullable(a.context, b.context, dir);
       case "outputLimit":
         return compareNullable(a.outputLimit, b.outputLimit, dir);
+      case "reasoningLevels":
+        return compareNullable(a.reasoningSummary.levelCount, b.reasoningSummary.levelCount, dir);
       case "releaseDate":
         return compareNullableDate(a.releaseDate, b.releaseDate, dir);
       case "lastUpdated":
         return compareNullableDate(a.lastUpdated, b.lastUpdated, dir);
-      case "offerCount":
+      case "providerCount":
         return compareNullable(a.providerCount, b.providerCount, dir);
-      case "capabilities":
-        return compareNullable(a.capabilityCount, b.capabilityCount, dir);
       default:
         return 0;
     }
   });
-  void blend;
   return copy;
 }
 
-export function sortOffers(
-  rows: OfferDTO[],
-  key: SortKey,
-  dir: SortDir,
-): OfferDTO[] {
-  const copy = [...rows];
-  copy.sort((a, b) => {
-    switch (key) {
-      case "name":
-        return dir === "asc" ? a.name.localeCompare(b.name) : b.name.localeCompare(a.name);
-      case "input":
-        return compareNullable(a.cost.input, b.cost.input, dir);
-      case "output":
-        return compareNullable(a.cost.output, b.cost.output, dir);
-      case "blended":
-        return compareNullable(blendedPrice(a.cost), blendedPrice(b.cost), dir);
-      case "cacheRead":
-        return compareNullable(a.cost.cache_read, b.cost.cache_read, dir);
-      case "cacheWrite":
-        return compareNullable(a.cost.cache_write, b.cost.cache_write, dir);
-      case "context":
-        return compareNullable(a.limits.context, b.limits.context, dir);
-      case "outputLimit":
-        return compareNullable(a.limits.output, b.limits.output, dir);
-      case "releaseDate":
-        return compareNullableDate(a.releaseDate, b.releaseDate, dir);
-      case "lastUpdated":
-        return compareNullableDate(a.lastUpdated, b.lastUpdated, dir);
-      case "offerCount":
-        return compareNullable(null, null, dir);
-      case "capabilities":
-        return compareNullable(capabilityCount(a), capabilityCount(b), dir);
-      default:
-        return 0;
+export function reasoningOptionLabel(option: ReasoningOption): string {
+  if (option.type === "effort") {
+    return option.values?.length ? option.values.join(" / ") : "推理档位";
+  }
+  if (option.type === "budget_tokens") {
+    if (option.min !== undefined && option.max !== undefined) {
+      return `${option.min.toLocaleString()} - ${option.max.toLocaleString()} tokens`;
     }
-  });
-  return copy;
+    if (option.min !== undefined) return `≥ ${option.min.toLocaleString()} tokens`;
+    if (option.max !== undefined) return `≤ ${option.max.toLocaleString()} tokens`;
+    return "token 预算";
+  }
+  if (option.type === "toggle") return "可开关";
+  return option.type;
 }
