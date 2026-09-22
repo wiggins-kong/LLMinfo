@@ -10,6 +10,7 @@ import {
   motionItemAttribute,
   motionTimings,
   removalDuration,
+  selectionMotionAttribute,
   shouldAnimateReason,
   staggerLimit,
 } from "../src/ui/motion";
@@ -34,6 +35,12 @@ describe("motion timings", () => {
   it("only tags rows with enter motion when the result set is fresh", () => {
     expect(motionItemAttribute(true)).toBe(" data-motion-item");
     expect(motionItemAttribute(false)).toBe("");
+  });
+
+  it("tags explicit model-selection motion states", () => {
+    expect(selectionMotionAttribute("enter")).toBe(' data-selection-motion="enter"');
+    expect(selectionMotionAttribute("exit")).toBe(' data-selection-motion="exit"');
+    expect(selectionMotionAttribute("list")).toBe(' data-selection-motion="list"');
   });
 
   it("treats every explicit render reason as animatable", () => {

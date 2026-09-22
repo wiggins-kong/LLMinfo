@@ -21,6 +21,9 @@ const PATHS: Record<string, IconNode> = {
   "triangle-alert": icons.TriangleAlert,
   "circle-alert": icons.CircleAlert,
   "table-2": icons.Table2,
+  "chevron-left": icons.ChevronLeft,
+  "chevron-right": icons.ChevronRight,
+  "rows-3": icons.Rows3,
 };
 
 export type IconName = keyof typeof PATHS;

@@ -28,10 +28,27 @@ import {
   type SortKey,
 } from "./lib/query-engine";
 import { formatContext } from "./lib/normalize";
+import {
+  DEFAULT_PAGE_SIZE,
+  PAGE_SIZE_OPTIONS,
+  clampPage,
+  isPageSize,
+  pageAfterPageSizeChange,
+  pageWindow,
+  type PageSize,
+} from "./lib/pagination";
 import type { DatasetDTO, Modality, OfferDTO } from "./lib/types";
 import { createQueryClient } from "./lib/worker-client";
 import { icon, type IconName } from "./ui/icons";
-import { motionItemAttribute, playEnter, playExit, prefersReducedMotion, type MotionReason } from "./ui/motion";
+import {
+  motionItemAttribute,
+  motionTimings,
+  playEnter,
+  playExit,
+  selectionMotionAttribute,
+  type MotionReason,
+  type SelectionMotion,
+} from "./ui/motion";
 import {
   escapeAttr,
   escapeHtml,
@@ -41,7 +58,8 @@ import {
   tile,
 } from "./ui/format";
 
-type MenuId = "providers" | "statuses" | "modalities" | "capabilities" | "sort" | null;
+type FilterMenuId = "providers" | "statuses" | "modalities" | "capabilities";
+type MenuId = FilterMenuId | "sort" | "page-size" | null;
 
 interface AppState {
   settingsOpen: boolean;
@@ -60,6 +78,8 @@ interface AppState {
   error: string | null;
   mobileDetail: boolean;
   rowsScrollTop: number;
+  page: number;
+  pageSize: PageSize;
 }
 
 const state: AppState = {
@@ -90,6 +110,8 @@ const state: AppState = {
   error: null,
   mobileDetail: false,
   rowsScrollTop: 0,
+  page: 1,
+  pageSize: DEFAULT_PAGE_SIZE,
 };
 
 const SORT_OPTIONS: { key: SortKey; label: string }[] = [
@@ -119,7 +141,6 @@ const MIN_LEFT = 300;
 const MIN_RIGHT = 420;
 const SPLITTER_WIDTH = 8;
 const VIRTUAL_THRESHOLD = 120;
-const VIRTUAL_ROW_HEIGHT = 62;
 const MOBILE_BREAKPOINT = 1023;
 
 let queryTimer: number | null = null;
@@ -130,6 +151,10 @@ let virtualData: ModelAggregate[] = [];
 let pendingRowsScrollTop: number | null = null;
 let draggingSplit = false;
 let historyPushed = false;
+let mobileBackPending = false;
+let selectionMotion: SelectionMotion | null = null;
+let selectionMotionModelId: string | null = null;
+let virtualSelectionMotionModelId: string | null = null;
 const queryClient = createQueryClient();
 
 function q<T extends Element = HTMLElement>(selector: string, root: ParentNode = document): T | null {
@@ -146,6 +171,13 @@ function isMobile(): boolean {
 
 function canSplit(): boolean {
   return !isMobile() && window.innerWidth >= MIN_LEFT + MIN_RIGHT + SPLITTER_WIDTH;
+}
+
+function virtualRowPitch(): number {
+  const styles = getComputedStyle(document.documentElement);
+  const row = Number.parseFloat(styles.getPropertyValue("--row"));
+  const gap = Number.parseFloat(styles.getPropertyValue("--row-gap"));
+  return (Number.isFinite(row) ? row : 68) + (Number.isFinite(gap) ? gap : 4);
 }
 
 function saveLocal(): void {
@@ -175,6 +207,46 @@ function closeSettings(): void {
     render("none");
     focusSettingsTrigger();
   });
+}
+
+function openMobileDetail(): void {
+  state.mobileDetail = true;
+  if (historyPushed) return;
+  window.history.pushState({ llminfoMobileDetail: true }, "");
+  historyPushed = true;
+}
+
+function playMobileDetailExit(): Promise<void> {
+  const detail = q<HTMLElement>(".detail-scroll");
+  if (!detail) return Promise.resolve();
+  detail.style.pointerEvents = "none";
+  detail.dataset.selectionMotion = "exit";
+  return new Promise((resolve) => {
+    const finish = () => {
+      window.clearTimeout(fallback);
+      resolve();
+    };
+    detail.addEventListener("animationend", finish, { once: true });
+    const fallback = window.setTimeout(finish, motionTimings().exit + 50);
+  });
+}
+
+function commitMobileDetailExit(): void {
+  mobileBackPending = false;
+  state.mobileDetail = false;
+  selectionMotion = "list";
+  selectionMotionModelId = null;
+  render("none");
+}
+
+function returnToMobileList(): void {
+  if (mobileBackPending) return;
+  mobileBackPending = true;
+  if (historyPushed) {
+    window.history.back();
+    return;
+  }
+  void playMobileDetailExit().then(commitMobileDetailExit);
 }
 
 function applyAppearance(): void {
@@ -227,6 +299,7 @@ async function runQuery(): Promise<void> {
   state.totalModels = response.totalModels;
   state.durationMs = response.durationMs;
   state.pending = false;
+  state.page = clampPage(state.page, state.models.length, state.pageSize);
   keepSelection();
   state.rowsScrollTop = 0;
   render("query");
@@ -282,16 +355,19 @@ async function loadData(manual = false): Promise<void> {
 
 function setQuery(patch: Partial<QueryState>): void {
   state.query = { ...state.query, ...patch };
+  state.page = 1;
   scheduleQuery();
 }
 
 function patchFilters(patch: Partial<Filters>): void {
   state.query = { ...state.query, filters: { ...state.query.filters, ...patch } };
+  state.page = 1;
   scheduleQuery();
 }
 
 function resetFilters(): void {
   state.query = { ...state.query, filters: { ...DEFAULT_QUERY.filters } };
+  state.page = 1;
   scheduleQuery();
 }
 
@@ -305,6 +381,22 @@ function selectedModelId(): string | null {
   return state.selected?.modelId ?? null;
 }
 
+function animateSelection(modelId: string): void {
+  selectionMotion = "enter";
+  selectionMotionModelId = modelId;
+}
+
+function selectionEnterAttribute(modelId: string, active: boolean): string {
+  if (!active) return "";
+  const direct = selectionMotion === "enter" && selectionMotionModelId === modelId;
+  const virtual = virtualSelectionMotionModelId === modelId;
+  return direct || virtual ? selectionMotionAttribute("enter") : "";
+}
+
+function selectionListAttribute(): string {
+  return selectionMotion === "list" ? selectionMotionAttribute("list") : "";
+}
+
 function render(reason: MotionReason = "none"): void {
   applyAppearance();
   const root = document.getElementById("app");
@@ -312,6 +404,7 @@ function render(reason: MotionReason = "none"): void {
   logoObserver?.disconnect();
   const active = document.activeElement;
   const focusId = active instanceof HTMLInputElement ? active.id : null;
+  const focusKey = active instanceof HTMLElement ? active.dataset.focusKey ?? null : null;
   const selectionStart = active instanceof HTMLInputElement ? active.selectionStart : null;
   const selectionEnd = active instanceof HTMLInputElement ? active.selectionEnd : null;
   const currentRows = q<HTMLElement>('[data-role="rows"]', root);
@@ -326,9 +419,10 @@ function render(reason: MotionReason = "none"): void {
         ${renderToolbar()}
         ${state.error ? `<p class="alert" role="alert">${icon("circle-alert", 14)}<span>${escapeHtml(state.error)}</span></p>` : ""}
         <div class="split" data-mobile-detail="${state.mobileDetail ? "true" : "false"}">
-          <section class="model-pane" aria-label="模型列表">
+          <section class="model-pane" aria-label="模型列表"${selectionListAttribute()}>
             <div class="pane-head">${renderListHead()}</div>
             ${renderModelList()}
+            ${renderPagination()}
           </section>
           <div class="splitter" role="separator" aria-label="调整列表与详情宽度" aria-orientation="vertical" tabindex="0" data-action="splitter" aria-valuemin="24" aria-valuemax="72" aria-valuenow="${Math.round(state.local.splitRatio * 100)}"></div>
           <aside class="detail-pane" aria-label="模型详情">
@@ -340,8 +434,13 @@ function render(reason: MotionReason = "none"): void {
       ${state.settingsOpen ? renderSettings() : ""}
       ${renderMenu()}
     </div>`;
+  virtualSelectionMotionModelId = selectionMotion === "enter" ? selectionMotionModelId : null;
+  selectionMotion = null;
+  selectionMotionModelId = null;
 
-  pendingRowsScrollTop = mobile || reason === "query" ? null : state.rowsScrollTop;
+  pendingRowsScrollTop = mobile || reason === "query" || state.rowsScrollTop === 0
+    ? null
+    : state.rowsScrollTop;
   const detail = q<HTMLElement>(".detail-scroll", root);
   if (detail) detail.scrollTop = detailScrollTop;
   const motionContent = q<HTMLElement>(".motion-content", root);
@@ -359,6 +458,10 @@ function render(reason: MotionReason = "none"): void {
       restored.focus();
       if (selectionStart !== null) restored.setSelectionRange(selectionStart, selectionEnd ?? selectionStart);
     }
+  }
+  if (focusKey) {
+    const restored = qa<HTMLElement>("[data-focus-key]").find((element) => element.dataset.focusKey === focusKey);
+    restored?.focus();
   }
   if (state.settingsOpen && active instanceof HTMLElement && !active.closest(".settings-modal")) {
     q<HTMLElement>('.settings-modal [data-action="settings-close"]')?.focus();
@@ -420,6 +523,37 @@ function renderListHead(): string {
     </div>`;
 }
 
+function renderPagination(): string {
+  if (!state.models.length) return "";
+  const window = pageWindow(state.models, state.page, state.pageSize);
+  const atStart = window.page <= 1;
+  const atEnd = window.page >= window.totalPages;
+  return `<nav class="pagination" aria-label="模型分页">
+    <div class="pagination-summary num" aria-live="polite" aria-atomic="true">
+      <span class="pagination-range">${window.start + 1}-${window.end} / ${window.totalItems}</span>
+      <span class="pagination-page">${window.page} / ${window.totalPages} 页</span>
+    </div>
+    <div class="pagination-actions">
+      <button type="button" class="iconbtn pagination-btn" data-action="page-prev" data-focus-key="page-prev" aria-label="上一页" title="上一页" ${atStart ? "disabled" : ""}>${icon("chevron-left", 18)}</button>
+      <button type="button" class="iconbtn pagination-btn" data-action="page-next" data-focus-key="page-next" aria-label="下一页" title="下一页" ${atEnd ? "disabled" : ""}>${icon("chevron-right", 18)}</button>
+      <div class="menu-anchor">
+        <button type="button" class="toolbtn compact page-size-trigger" data-action="menu" data-menu="page-size" data-focus-key="page-size" aria-haspopup="menu" aria-expanded="${state.menu === "page-size"}" aria-label="每页数量，当前 ${window.pageSize} 条">${icon("rows-3", 14)}<span>${window.pageSize} 条</span>${icon("chevron-down", 12)}</button>
+        ${state.menu === "page-size" ? renderPageSizeMenu(window.pageSize) : ""}
+      </div>
+    </div>
+  </nav>`;
+}
+
+function renderPageSizeMenu(currentSize: PageSize): string {
+  const close = `<button type="button" class="menu-close" data-action="menu-close" aria-label="关闭">${icon("x", 13)}</button>`;
+  return `<div class="popover page-size-menu mica-acrylic-strong" role="dialog" aria-label="每页数量">
+    <header>每页数量${close}</header>
+    <div class="menu-options">
+      ${PAGE_SIZE_OPTIONS.map((size) => `<button type="button" class="menu-option${currentSize === size ? " active" : ""}" role="menuitemradio" aria-checked="${currentSize === size}" data-action="page-size-option" data-value="${size}">${icon("check", 13)}<span>${size} 条</span></button>`).join("")}
+    </div>
+  </div>`;
+}
+
 function renderModelList(): string {
   if (state.refreshing && !state.dataset) {
     return `<div class="skeleton-list" aria-label="正在加载">${Array.from({ length: 8 }, () => '<div class="skeleton-row"><i></i><span></span><span></span></div>').join("")}</div>`;
@@ -430,12 +564,13 @@ function renderModelList(): string {
   if (!state.models.length) {
     return `<div class="empty">${icon("search-x", 22)}<p>没有符合条件的模型</p><span>试试放宽筛选条件或清空搜索。</span><button type="button" class="navbtn" data-action="reset-filters">清空筛选</button></div>`;
   }
-  const virtual = state.models.length > VIRTUAL_THRESHOLD;
+  const currentPage = pageWindow(state.models, state.page, state.pageSize);
+  const virtual = currentPage.items.length > VIRTUAL_THRESHOLD;
   return `<div class="rows scroll-thin" data-role="rows" data-virtual="${virtual ? "model" : "none"}">
     ${
       virtual
         ? `<div class="vspacer" data-role="vspacer"></div><div class="vwindow" data-role="vwindow"></div>`
-        : state.models.map((model) => renderModelRow(model)).join("")
+        : currentPage.items.map((model) => renderModelRow(model)).join("")
     }
   </div>`;
 }
@@ -456,7 +591,7 @@ function reasoningLine(model: ModelAggregate): string {
 
 function renderModelRow(model: ModelAggregate, animate = true): string {
   const active = selectedModelId() === model.modelId;
-  return `<button type="button" class="model-row${active ? " active" : ""}" data-model="${escapeAttr(model.modelId)}" data-action="select-model"${motionItemAttribute(animate)} aria-pressed="${active}">
+  return `<button type="button" class="model-row${active ? " active" : ""}" data-model="${escapeAttr(model.modelId)}" data-action="select-model"${selectionEnterAttribute(model.modelId, active)}${motionItemAttribute(animate)} aria-pressed="${active}">
     <span class="row-main">
       ${tile(initialsOf(model.family ?? model.name), model.family ?? model.name, 26)}
       <span class="row-name"><b>${escapeHtml(model.name)}</b><small class="mono">${escapeHtml(model.modelId)}</small></span>
@@ -472,16 +607,20 @@ function renderModelRow(model: ModelAggregate, animate = true): string {
 }
 
 function renderDetail(): string {
+  const motion =
+    state.selected && selectionMotion === "enter" && selectionMotionModelId === state.selected.modelId
+      ? selectionMotionAttribute("enter")
+      : "";
   if (state.mobileDetail && state.selected) {
-    return `<div class="detail-mobile-bar"><button type="button" class="iconbtn" data-action="mobile-back" aria-label="返回列表">${icon("chevron-down", 16)}</button><b>模型详情</b></div>${detailContent(state.selected)}`;
+    return `<div class="detail-mobile-bar"><button type="button" class="iconbtn" data-action="mobile-back" aria-label="返回列表">${icon("chevron-down", 16)}</button><b>模型详情</b></div>${detailContent(state.selected, motion)}`;
   }
   if (!state.selected) {
     return `<div class="detail-empty">${icon("table-2", 26)}<p>选择模型查看详情</p><span>左侧列表中的模型信息会在这里展开。</span></div>`;
   }
-  return detailContent(state.selected);
+  return detailContent(state.selected, motion);
 }
 
-function detailContent(model: ModelAggregate): string {
+function detailContent(model: ModelAggregate, motion = ""): string {
   const summary = model.reasoningSummary;
   const levels = summary.levels.length ? summary.levels.join(" / ") : "未声明";
   const budget = summary.budgetMin !== null || summary.budgetMax !== null
@@ -490,7 +629,7 @@ function detailContent(model: ModelAggregate): string {
   const optionRows = summary.options.length
     ? summary.options.map((option) => `<div class="reasoning-option"><b>${escapeHtml(option.type)}</b><span>${escapeHtml(reasoningOptionLabel(option))}</span></div>`).join("")
     : '<p class="hint small">上游未提供推理档位。</p>';
-  return `<div class="detail-scroll scroll-thin">
+  return `<div class="detail-scroll scroll-thin"${motion}>
     <header class="detail-head">
       ${tile(initialsOf(model.family ?? model.name), model.family ?? model.name, 40)}
       <div class="detail-title"><h1>${escapeHtml(model.name)}</h1><span class="mono">${escapeHtml(model.modelId)}</span></div>
@@ -592,11 +731,12 @@ function renderStatusbar(): string {
   </div>`;
 }
 
-function menuLabel(id: Exclude<MenuId, null>): string {
+function menuLabel(id: FilterMenuId | "sort" | "page-size"): string {
   if (id === "providers") return "供应商";
   if (id === "statuses") return "状态";
   if (id === "modalities") return "输入模态";
   if (id === "capabilities") return "能力";
+  if (id === "page-size") return "每页数量";
   return "排序";
 }
 
@@ -614,7 +754,7 @@ function renderSortMenu(): string {
   </div>`;
 }
 
-function filterMenuItems(id: Exclude<MenuId, null | "sort">): { value: string; label: string }[] {
+function filterMenuItems(id: FilterMenuId): { value: string; label: string }[] {
   if (id === "providers") {
     return providerOptions().map((provider) => ({ value: provider.id, label: provider.name }));
   }
@@ -628,14 +768,14 @@ function filterMenuItems(id: Exclude<MenuId, null | "sort">): { value: string; l
   return CAPABILITY_FILTERS.map((item) => ({ value: item.key, label: item.label }));
 }
 
-function selectedFilterValues(id: Exclude<MenuId, null | "sort">): string[] {
+function selectedFilterValues(id: FilterMenuId): string[] {
   if (id === "providers") return state.query.filters.providerIds;
   if (id === "statuses") return state.query.filters.statuses;
   if (id === "modalities") return state.query.filters.inputModalities;
   return CAPABILITY_FILTERS.filter((item) => state.query.filters[item.key]).map((item) => item.key);
 }
 
-function renderFilterMenu(id: Exclude<MenuId, null | "sort">): string {
+function renderFilterMenu(id: FilterMenuId): string {
   const close = `<button type="button" class="menu-close" data-action="menu-close" aria-label="关闭">${icon("x", 13)}</button>`;
   const needle = state.menuSearch.trim().toLowerCase();
   const items = filterMenuItems(id).filter((item) => !needle || item.label.toLowerCase().includes(needle));
@@ -680,9 +820,10 @@ function setupVirtualList(): void {
     pendingRowsScrollTop = null;
     return;
   }
-  virtualData = state.models;
+  virtualData = pageWindow(state.models, state.page, state.pageSize).items;
+  const rowPitch = virtualRowPitch();
   const spacer = q<HTMLElement>('[data-role="vspacer"]', container);
-  if (spacer) spacer.style.height = `${virtualData.length * VIRTUAL_ROW_HEIGHT}px`;
+  if (spacer) spacer.style.height = `${virtualData.length * rowPitch}px`;
   container.addEventListener("scroll", scheduleVirtualRender, { passive: true });
   scheduleVirtualRender();
   if (pendingRowsScrollTop !== null) {
@@ -707,10 +848,24 @@ function renderVirtualWindow(): void {
   const container = q<HTMLElement>('[data-role="rows"][data-virtual="model"]');
   const windowNode = q<HTMLElement>('[data-role="vwindow"]', container ?? document);
   if (!container || !windowNode) return;
-  const start = Math.max(0, Math.floor(container.scrollTop / VIRTUAL_ROW_HEIGHT) - 6);
-  const end = Math.min(virtualData.length, start + Math.ceil(container.clientHeight / VIRTUAL_ROW_HEIGHT) + 12);
-  windowNode.style.transform = `translateY(${start * VIRTUAL_ROW_HEIGHT}px)`;
-  windowNode.innerHTML = virtualData.slice(start, end).map((model) => renderModelRow(model, false)).join("");
+  const rowPitch = virtualRowPitch();
+  const start = Math.max(0, Math.floor(container.scrollTop / rowPitch) - 6);
+  const end = Math.min(virtualData.length, start + Math.ceil(container.clientHeight / rowPitch) + 12);
+  const rows = virtualData.slice(start, end);
+  windowNode.style.transform = `translateY(${start * rowPitch}px)`;
+  windowNode.innerHTML = rows.map((model) => renderModelRow(model, false)).join("");
+  if (virtualSelectionMotionModelId) {
+    const target = q<HTMLElement>(
+      `.model-row[data-model="${CSS.escape(virtualSelectionMotionModelId)}"]`,
+      windowNode,
+    );
+    if (target) {
+      const targetRect = target.getBoundingClientRect();
+      const containerRect = container.getBoundingClientRect();
+      const visible = targetRect.bottom > containerRect.top && targetRect.top < containerRect.bottom;
+      if (visible) virtualSelectionMotionModelId = null;
+    }
+  }
   hydrateLogos(windowNode);
 }
 
@@ -758,6 +913,27 @@ function hydrateLogos(root: ParentNode): void {
   for (const image of images) logoObserver.observe(image);
 }
 
+function changePage(delta: number): void {
+  const current = pageWindow(state.models, state.page, state.pageSize);
+  const nextPage = clampPage(current.page + delta, current.totalItems, current.pageSize);
+  if (nextPage === current.page) return;
+  state.page = nextPage;
+  state.rowsScrollTop = 0;
+  render("none");
+  q<HTMLElement>(`[data-focus-key="${delta < 0 ? "page-prev" : "page-next"}"]`)?.focus();
+}
+
+function changePageSize(value: number): void {
+  if (!isPageSize(value)) return;
+  state.page = pageAfterPageSizeChange(state.page, state.pageSize, value, state.models.length);
+  state.pageSize = value;
+  state.rowsScrollTop = 0;
+  state.menu = null;
+  state.menuSearch = "";
+  render("none");
+  q<HTMLElement>('[data-focus-key="page-size"]')?.focus();
+}
+
 function onClick(event: MouseEvent): void {
   const rows = q<HTMLElement>('[data-role="rows"]');
   if (rows) state.rowsScrollTop = rows.scrollTop;
@@ -777,23 +953,29 @@ function onClick(event: MouseEvent): void {
       const modelId = actionNode.dataset.model;
       const model = state.models.find((item) => item.modelId === modelId) ?? null;
       if (!model) break;
-      state.selected = model;
+      const changed = selectedModelId() !== model.modelId;
+      if (!changed && !isMobile()) break;
+      if (changed) {
+        state.selected = model;
+        animateSelection(model.modelId);
+      }
       if (isMobile()) {
-        state.mobileDetail = true;
-        if (!historyPushed) {
-          window.history.pushState({ llminfoMobileDetail: true }, "");
-          historyPushed = true;
-        }
+        openMobileDetail();
       }
       render("none");
       break;
     }
     case "mobile-back":
-      if (historyPushed) window.history.back();
-      else {
-        state.mobileDetail = false;
-        render("none");
-      }
+      returnToMobileList();
+      break;
+    case "page-prev":
+      changePage(-1);
+      break;
+    case "page-next":
+      changePage(1);
+      break;
+    case "page-size-option":
+      changePageSize(Number(actionNode.dataset.value));
       break;
     case "menu": {
       const menu = actionNode.dataset.menu as MenuId;
@@ -803,6 +985,13 @@ function onClick(event: MouseEvent): void {
       break;
     }
     case "menu-close":
+      if (state.menu === "page-size") {
+        state.menu = null;
+        state.menuSearch = "";
+        render("none");
+        q<HTMLElement>('[data-focus-key="page-size"]')?.focus();
+        break;
+      }
       state.menu = null;
       state.menuSearch = "";
       render("none");
@@ -905,17 +1094,15 @@ function onKeyDown(event: KeyboardEvent): void {
   }
   if (event.key === "Escape") {
     if (state.menu) {
+      const closingMenu = state.menu;
       state.menu = null;
       state.menuSearch = "";
       render("none");
+      if (closingMenu === "page-size") q<HTMLElement>('[data-focus-key="page-size"]')?.focus();
     } else if (state.settingsOpen) {
       closeSettings();
     } else if (state.mobileDetail) {
-      if (historyPushed) window.history.back();
-      else {
-        state.mobileDetail = false;
-        render("none");
-      }
+      returnToMobileList();
     }
   }
   if (event.key === "Tab" && state.settingsOpen) {
@@ -940,17 +1127,26 @@ function onKeyDown(event: KeyboardEvent): void {
   if (typing || !state.models.length) return;
   if (event.key === "ArrowDown" || event.key === "ArrowUp") {
     event.preventDefault();
-    const currentIndex = state.selected ? state.models.findIndex((model) => model.modelId === state.selected!.modelId) : -1;
-    const nextIndex = Math.min(state.models.length - 1, Math.max(0, currentIndex + (event.key === "ArrowDown" ? 1 : -1)));
-    state.selected = state.models[nextIndex];
-    render("none");
-    q<HTMLElement>(`.model-row[data-model="${CSS.escape(state.selected.modelId)}"]`)?.scrollIntoView({ block: "nearest" });
-  } else if (event.key === "Enter" && state.selected && isMobile()) {
-    state.mobileDetail = true;
-    if (!historyPushed) {
-      window.history.pushState({ llminfoMobileDetail: true }, "");
-      historyPushed = true;
+    const currentPage = pageWindow(state.models, state.page, state.pageSize);
+    const currentIndex = state.selected
+      ? currentPage.items.findIndex((model) => model.modelId === state.selected!.modelId)
+      : -1;
+    const direction = event.key === "ArrowDown" ? 1 : -1;
+    const nextIndex = currentIndex < 0
+      ? direction > 0 ? 0 : currentPage.items.length - 1
+      : currentIndex + direction;
+    if (nextIndex < 0 || nextIndex >= currentPage.items.length) return;
+    const next = currentPage.items[nextIndex];
+    if (next && next.modelId !== selectedModelId()) {
+      state.selected = next;
+      animateSelection(next.modelId);
+      render("none");
+      window.requestAnimationFrame(() => {
+        q<HTMLElement>(`.model-row[data-model="${CSS.escape(next.modelId)}"]`)?.scrollIntoView({ block: "nearest" });
+      });
     }
+  } else if (event.key === "Enter" && state.selected && isMobile() && !target.closest(".pagination")) {
+    openMobileDetail();
     render("none");
   }
 }
@@ -995,8 +1191,8 @@ function onDoubleClick(event: MouseEvent): void {
 function onPopState(): void {
   if (historyPushed && state.mobileDetail) {
     historyPushed = false;
-    state.mobileDetail = false;
-    render("none");
+    mobileBackPending = true;
+    void playMobileDetailExit().then(commitMobileDetailExit);
   }
 }
 

@@ -51,7 +51,7 @@ export function tileStyle(seed: string): string {
 
 export function tile(label: string, seed: string, size = 26): string {
   return `<span class="tile" style="${tileStyle(seed)};width:${size}px;height:${size}px;font-size:${
-    size <= 26 ? 11 : 15
+    size <= 26 ? 13 : 17
   }px">${escapeHtml(label)}</span>`;
 }
 

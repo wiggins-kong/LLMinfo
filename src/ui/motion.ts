@@ -1,6 +1,7 @@
 export type MotionReason = "startup" | "tab" | "query" | "sync" | "none";
 
 export type OverlayKind = "drawer" | "settings" | "menu" | "modal";
+export type SelectionMotion = "enter" | "exit" | "list";
 
 export interface MotionTimings {
   micro: number;
@@ -65,6 +66,10 @@ export function removalDuration(mobile = isMobileMotion()): number {
  */
 export function motionItemAttribute(animate: boolean): string {
   return animate ? " data-motion-item" : "";
+}
+
+export function selectionMotionAttribute(motion: SelectionMotion): string {
+  return ` data-selection-motion="${motion}"`;
 }
 
 export interface EnterOptions {
